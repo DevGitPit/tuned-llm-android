@@ -167,10 +167,19 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
                 break;
             }
 
-            // JNI Callback
-            jstring jtoken = env->NewStringUTF(piece.c_str());
-            env->CallVoidMethod(callback_global, onToken_id, jtoken);
-            env->DeleteLocalRef(jtoken);
+            // Filter out <start_of_turn> if it appears in the output
+            size_t start_pos = piece.find("<start_of_turn>");
+            if (start_pos != std::string::npos) {
+                piece.erase(start_pos, 15); // length of "<start_of_turn>"
+                LOGI("Filtered out <start_of_turn> from output");
+            }
+
+            if (!piece.empty()) {
+                // JNI Callback
+                jstring jtoken = env->NewStringUTF(piece.c_str());
+                env->CallVoidMethod(callback_global, onToken_id, jtoken);
+                env->DeleteLocalRef(jtoken);
+            }
 
             // Feed Forward
             batch.n_tokens = 0;

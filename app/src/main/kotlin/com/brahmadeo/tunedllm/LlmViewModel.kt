@@ -89,7 +89,11 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         
         // Clean current messages of any leaked tokens just in case
         val sanitizedMessages = _uiState.value.messages.map { 
-            it.copy(content = it.content.replace("<end_of_turn>", "").replace("<eos>", "").trim())
+            it.copy(content = it.content
+                .replace("<end_of_turn>", "")
+                .replace("<start_of_turn>", "")
+                .replace("<eos>", "")
+                .trim())
         }
 
         val history = sanitizedMessages + userMsg
