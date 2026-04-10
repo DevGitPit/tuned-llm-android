@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         viewModel.startAndBindService()
 
         setContent {
-            MaterialTheme {
+            TunedLLMTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
