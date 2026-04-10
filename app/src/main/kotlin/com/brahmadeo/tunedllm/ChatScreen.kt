@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import dev.jeziellago.compose.markdowntext.MarkdownText
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,10 +187,10 @@ fun ChatMessageItem(message: ChatMessage) {
             ),
             tonalElevation = 2.dp
         ) {
-            Text(
-                text = message.content,
+            MarkdownText(
+                markdown = message.content,
                 modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium.copy(color = contentColor)
             )
         }
         Text(
