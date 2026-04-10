@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.4.0" type="incidents">
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; SDK_INT is always >= 26">
+        <fix-data conditional="true"/>
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*2}/com/brahmadeo/tunedllm/LlmService.kt"
+            line="52"
+            column="13"
+            startOffset="1504"
+            endLine="52"
+            endColumn="59"
+            endOffset="1550"/>
+    </incident>
+
+    <incident
+        id="StaticFieldLeak"
+        severity="warning"
+        message="This field leaks a context object">
+        <location
+            file="${:app*debug*MAIN*sourceProvider*0*javaDir*2}/com/brahmadeo/tunedllm/LlmViewModel.kt"
+            line="25"
+            column="5"
+            startOffset="846"
+            endLine="25"
+            endColumn="47"
+            endOffset="888"/>
+    </incident>
+
+    <incident
+        id="OldTargetApi"
+        severity="warning"
+        message="Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the `android.os.Build.VERSION_CODES` javadoc for details.">
+        <fix-replace
+            description="Update targetSdkVersion to 36"
+            oldString="34"
+            replacement="36"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="14"
+            column="9"
+            startOffset="276"
+            endLine="14"
+            endColumn="21"
+            endOffset="288"/>
+    </incident>
+
+    <incident
+        id="ChromeOsAbiSupport"
+        severity="warning"
+        message="Missing x86_64 ABI support for ChromeOS">
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="30"
+            column="24"
+            startOffset="674"
+            endLine="30"
+            endColumn="35"
+            endOffset="685"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.core:core-ktx than 1.12.0 is available: 1.18.0">
+        <fix-replace
+            description="Change to 1.18.0"
+            family="Update versions"
+            oldString="1.12.0"
+            replacement="1.18.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="67"
+            column="20"
+            startOffset="1483"
+            endLine="67"
+            endColumn="51"
+            endOffset="1514"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.7.0 is available: 2.10.0">
+        <fix-replace
+            description="Change to 2.10.0"
+            family="Update versions"
+            oldString="2.7.0"
+            replacement="2.10.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="68"
+            column="20"
+            startOffset="1534"
+            endLine="68"
+            endColumn="68"
+            endOffset="1582"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.activity:activity-compose than 1.8.2 is available: 1.13.0">
+        <fix-replace
+            description="Change to 1.13.0"
+            family="Update versions"
+            oldString="1.8.2"
+            replacement="1.13.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="69"
+            column="20"
+            startOffset="1602"
+            endLine="69"
+            endColumn="62"
+            endOffset="1644"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.compose:compose-bom than 2023.08.00 is available: 2026.03.01">
+        <fix-replace
+            description="Change to 2026.03.01"
+            family="Update versions"
+            oldString="2023.08.00"
+            replacement="2026.03.01"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="70"
+            column="20"
+            startOffset="1664"
+            endLine="70"
+            endColumn="71"
+            endOffset="1715"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.7.0 is available: 2.10.0">
+        <fix-replace
+            description="Change to 2.10.0"
+            family="Update versions"
+            oldString="2.7.0"
+            replacement="2.10.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="75"
+            column="20"
+            startOffset="1950"
+            endLine="75"
+            endColumn="74"
+            endOffset="2004"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.test.ext:junit than 1.1.5 is available: 1.3.0">
+        <fix-replace
+            description="Change to 1.3.0"
+            family="Update versions"
+            oldString="1.1.5"
+            replacement="1.3.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="78"
+            column="31"
+            startOffset="2084"
+            endLine="78"
+            endColumn="62"
+            endOffset="2115"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.test.espresso:espresso-core than 3.5.1 is available: 3.7.0">
+        <fix-replace
+            description="Change to 3.7.0"
+            family="Update versions"
+            oldString="3.5.1"
+            replacement="3.7.0"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="79"
+            column="31"
+            startOffset="2146"
+            endLine="79"
+            endColumn="75"
+            endOffset="2190"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.compose:compose-bom than 2023.08.00 is available: 2026.03.01">
+        <fix-replace
+            description="Change to 2026.03.01"
+            family="Update versions"
+            oldString="2023.08.00"
+            replacement="2026.03.01"
+            priority="0"/>
+        <location
+            file="${:app*projectDir}/build.gradle"
+            line="80"
+            column="31"
+            startOffset="2221"
+            endLine="80"
+            endColumn="82"
+            endOffset="2272"/>
+    </incident>
+
+</incidents>

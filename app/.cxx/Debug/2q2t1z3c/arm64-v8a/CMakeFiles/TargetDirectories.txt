@@ -1,0 +1,3 @@
+/data/data/com.termux/files/home/tuned-llm/app/.cxx/Debug/2q2t1z3c/arm64-v8a/CMakeFiles/llama_jni.dir
+/data/data/com.termux/files/home/tuned-llm/app/.cxx/Debug/2q2t1z3c/arm64-v8a/CMakeFiles/edit_cache.dir
+/data/data/com.termux/files/home/tuned-llm/app/.cxx/Debug/2q2t1z3c/arm64-v8a/CMakeFiles/rebuild_cache.dir

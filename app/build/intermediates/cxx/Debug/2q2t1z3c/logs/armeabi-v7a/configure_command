@@ -1,0 +1,18 @@
+/data/data/com.termux/files/home/.android-sdk/cmake/3.22.1/bin/cmake \
+  -H/data/data/com.termux/files/home/tuned-llm/app/src/main/cpp \
+  -DCMAKE_SYSTEM_NAME=Android \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_SYSTEM_VERSION=26 \
+  -DANDROID_PLATFORM=android-26 \
+  -DANDROID_ABI=armeabi-v7a \
+  -DCMAKE_ANDROID_ARCH_ABI=armeabi-v7a \
+  -DANDROID_NDK=/data/data/com.termux/files/home/.android-sdk/ndk/android-ndk-r29 \
+  -DCMAKE_ANDROID_NDK=/data/data/com.termux/files/home/.android-sdk/ndk/android-ndk-r29 \
+  -DCMAKE_TOOLCHAIN_FILE=/data/data/com.termux/files/home/.android-sdk/ndk/android-ndk-r29/build/cmake/android.toolchain.cmake \
+  -DCMAKE_MAKE_PROGRAM=/data/data/com.termux/files/home/.android-sdk/cmake/3.22.1/bin/ninja \
+  -DCMAKE_CXX_FLAGS=-std=c++17 \
+  -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/data/data/com.termux/files/home/tuned-llm/app/build/intermediates/cxx/Debug/2q2t1z3c/obj/armeabi-v7a \
+  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/data/data/com.termux/files/home/tuned-llm/app/build/intermediates/cxx/Debug/2q2t1z3c/obj/armeabi-v7a \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -B/data/data/com.termux/files/home/tuned-llm/app/.cxx/Debug/2q2t1z3c/armeabi-v7a \
+  -GNinja
