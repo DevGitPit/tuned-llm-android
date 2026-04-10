@@ -162,17 +162,24 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
             // Many models use variations of these with different IDs
             if (piece.find("<end_of_turn>") != std::string::npos || 
                 piece.find("<eos>") != std::string::npos || 
-                piece.find("</s>") != std::string::npos) {
+                piece.find("</s>") != std::string::npos ||
+                piece.find("<start_of_turn>") != std::string::npos ||
+                piece.find("</start_of_turn>") != std::string::npos) {
                 LOGI("String-based EOG detected: %s", piece.c_str());
                 break;
             }
 
-            // Filter out <start_of_turn> if it appears in the output
-            size_t start_pos = piece.find("<start_of_turn>");
-            if (start_pos != std::string::npos) {
-                piece.erase(start_pos, 15); // length of "<start_of_turn>"
-                LOGI("Filtered out <start_of_turn> from output");
-            }
+            // Filter out any turn tags if they somehow leaked past the stop check
+            auto filter_tags = [&](std::string& s, const std::string& tag) {
+                size_t pos = std::string::npos;
+                while ((pos = s.find(tag)) != std::string::npos) {
+                    s.erase(pos, tag.length());
+                }
+            };
+            
+            filter_tags(piece, "<start_of_turn>");
+            filter_tags(piece, "</start_of_turn>");
+            filter_tags(piece, "<end_of_turn>");
 
             if (!piece.empty()) {
                 // JNI Callback

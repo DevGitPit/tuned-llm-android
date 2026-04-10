@@ -92,6 +92,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(content = it.content
                 .replace("<end_of_turn>", "")
                 .replace("<start_of_turn>", "")
+                .replace("</start_of_turn>", "")
                 .replace("<eos>", "")
                 .trim())
         }
