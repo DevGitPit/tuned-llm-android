@@ -76,6 +76,7 @@ dependencies {
 
     // Markdown Renderer
     implementation "com.github.jeziellago:compose-markdown:0.7.1"
+    implementation "io.noties.markwon:core:4.6.2"
     
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

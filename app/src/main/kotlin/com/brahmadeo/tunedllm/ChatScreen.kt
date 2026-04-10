@@ -1,5 +1,6 @@
 package com.brahmadeo.tunedllm
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -190,7 +191,8 @@ fun ChatMessageItem(message: ChatMessage) {
             MarkdownText(
                 markdown = message.content,
                 modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium.copy(color = contentColor)
+                style = MaterialTheme.typography.bodyMedium.copy(color = contentColor),
+                syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
             )
         }
         Text(
