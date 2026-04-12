@@ -148,7 +148,7 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                     Divider()
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Model: ${state.lastModelPath?.substringAfterLast("/") ?: "None"}",
+                            text = "Model: ${state.modelName ?: state.lastModelPath?.substringAfterLast("/") ?: "None"}",
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1
                         )

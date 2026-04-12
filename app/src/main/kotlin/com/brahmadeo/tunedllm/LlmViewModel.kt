@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.net.Uri
 import android.os.IBinder
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -32,7 +33,12 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val savedModelPath = prefs.getString("last_model_path", null)
-        _uiState.update { it.copy(lastModelPath = savedModelPath) }
+        val savedModelName = prefs.getString("last_model_name", null)
+        _uiState.update { it.copy(
+            lastModelPath = savedModelPath,
+            modelName = savedModelName,
+            isAutoLoading = savedModelPath != null
+        ) }
 
         viewModelScope.launch {
             chatDao.getAllSessionsWithMessages().collect { sessionsWithMessages ->
@@ -92,8 +98,11 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
             // Try auto-loading last model if not loaded
             val savedPath = prefs.getString("last_model_path", null)
+            val savedName = prefs.getString("last_model_name", "Model")
             if (savedPath != null && !_uiState.value.isModelLoaded) {
-                loadModelFromPath(savedPath)
+                loadModelFromPath(savedPath, savedName ?: "Model")
+            } else {
+                _uiState.update { it.copy(isAutoLoading = false) }
             }
         }
 
@@ -157,36 +166,57 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
+            var originalName = "Model"
+            getApplication<Application>().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst()) {
+                    originalName = cursor.getString(nameIndex)
+                }
+            }
+
             val path = manager.copyModelToInternalStorage(uri) { progress ->
                 _uiState.update { it.copy(copyProgress = progress) }
             }
 
             if (path != null) {
                 _uiState.update { it.copy(isCopying = false) }
-                loadModelFromPath(path)
+                loadModelFromPath(path, originalName)
             } else {
                 _uiState.update { it.copy(isCopying = false, error = "Failed to copy model to internal storage") }
             }
         }
     }
 
-    private fun loadModelFromPath(path: String) {
+    private fun loadModelFromPath(path: String, modelName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val manager = llmService?.llmManager ?: return@launch
             val result = manager.loadModelFromPath(path)
             if (result.isSuccess) {
-                prefs.edit().putString("last_model_path", path).apply()
-                _uiState.update { it.copy(isModelLoaded = true, lastModelPath = path, error = null) }
+                prefs.edit()
+                    .putString("last_model_path", path)
+                    .putString("last_model_name", modelName)
+                    .apply()
+                _uiState.update { it.copy(
+                    isModelLoaded = true, 
+                    lastModelPath = path, 
+                    modelName = modelName,
+                    isAutoLoading = false,
+                    error = null
+                ) }
             } else {
-                _uiState.update { it.copy(isModelLoaded = false, error = result.exceptionOrNull()?.message ?: "Failed to load model") }
+                _uiState.update { it.copy(
+                    isModelLoaded = false, 
+                    isAutoLoading = false,
+                    error = result.exceptionOrNull()?.message ?: "Failed to load model"
+                ) }
             }
         }
     }
 
     fun unloadModel() {
         llmService?.llmManager?.unloadModel()
-        _uiState.update { it.copy(isModelLoaded = false, lastModelPath = null) }
-        prefs.edit().remove("last_model_path").apply()
+        _uiState.update { it.copy(isModelLoaded = false, lastModelPath = null, modelName = null) }
+        prefs.edit().remove("last_model_path").remove("last_model_name").apply()
     }
 
     fun generate(prompt: String) {

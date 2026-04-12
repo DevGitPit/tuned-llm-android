@@ -57,6 +57,13 @@ class MainActivity : ComponentActivity() {
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text("${(state.copyProgress * 100).toInt()}%")
+                                } else if (state.isAutoLoading) {
+                                    CircularProgressIndicator()
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text("Loading last used model...", style = MaterialTheme.typography.bodyLarge)
+                                    if (state.modelName != null) {
+                                        Text(state.modelName!!, style = MaterialTheme.typography.bodySmall)
+                                    }
                                 } else {
                                     Button(onClick = { modelPicker.launch("*/*") }) {
                                         Text("Select GGUF Model")
