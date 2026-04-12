@@ -213,7 +213,7 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
             batch_add(batch, new_token_id, n_past, {0}, true);
             int decode_res = llama_decode(g_state.ctx, batch);
             if (decode_res != 0) {
-                LOGE("llama_decode failed during generation with code: %d at n_past: %d", decode_res, n_past);
+                LOGE("llama_decode failed during generation with code: %d at n_past: %zu", decode_res, n_past);
                 throw std::runtime_error("llama_decode failed (" + std::to_string(decode_res) + ")");
             }
             n_past++;

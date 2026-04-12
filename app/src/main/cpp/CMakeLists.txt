@@ -29,6 +29,7 @@ set(GGML_SOURCES
     ${LLAMA_DIR}/ggml/src/ggml-backend.cpp
     ${LLAMA_DIR}/ggml/src/ggml-backend-dl.cpp
     ${LLAMA_DIR}/ggml/src/ggml-backend-reg.cpp
+    ${LLAMA_DIR}/ggml/src/ggml-backend-meta.cpp
     ${LLAMA_DIR}/ggml/src/ggml-opt.cpp
     ${LLAMA_DIR}/ggml/src/ggml-quants.c
     ${LLAMA_DIR}/ggml/src/ggml-threading.cpp
