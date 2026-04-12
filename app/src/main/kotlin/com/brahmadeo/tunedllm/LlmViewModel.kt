@@ -25,11 +25,15 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = ChatDatabase.getDatabase(application)
     private val chatDao = db.chatDao()
+    private val prefs = application.getSharedPreferences("tuned_llm_prefs", Context.MODE_PRIVATE)
 
     private var llmService: LlmService? = null
     private var isBound = false
 
     init {
+        val savedModelPath = prefs.getString("last_model_path", null)
+        _uiState.update { it.copy(lastModelPath = savedModelPath) }
+
         viewModelScope.launch {
             chatDao.getAllSessionsWithMessages().collect { sessionsWithMessages ->
                 val sessions = sessionsWithMessages.map { swm ->
@@ -85,6 +89,12 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             val binder = service as LlmService.LlmBinder
             llmService = binder.getService()
             isBound = true
+
+            // Try auto-loading last model if not loaded
+            val savedPath = prefs.getString("last_model_path", null)
+            if (savedPath != null && !_uiState.value.isModelLoaded) {
+                loadModelFromPath(savedPath)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -153,18 +163,30 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
             if (path != null) {
                 _uiState.update { it.copy(isCopying = false) }
-                viewModelScope.launch(Dispatchers.IO) {
-                    val result = manager.loadModelFromPath(path)
-                    if (result.isSuccess) {
-                        _uiState.update { it.copy(isModelLoaded = true, error = null) }
-                    } else {
-                        _uiState.update { it.copy(isModelLoaded = false, error = result.exceptionOrNull()?.message ?: "Failed to load model") }
-                    }
-                }
+                loadModelFromPath(path)
             } else {
                 _uiState.update { it.copy(isCopying = false, error = "Failed to copy model to internal storage") }
             }
         }
+    }
+
+    private fun loadModelFromPath(path: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val manager = llmService?.llmManager ?: return@launch
+            val result = manager.loadModelFromPath(path)
+            if (result.isSuccess) {
+                prefs.edit().putString("last_model_path", path).apply()
+                _uiState.update { it.copy(isModelLoaded = true, lastModelPath = path, error = null) }
+            } else {
+                _uiState.update { it.copy(isModelLoaded = false, error = result.exceptionOrNull()?.message ?: "Failed to load model") }
+            }
+        }
+    }
+
+    fun unloadModel() {
+        llmService?.llmManager?.unloadModel()
+        _uiState.update { it.copy(isModelLoaded = false, lastModelPath = null) }
+        prefs.edit().remove("last_model_path").apply()
     }
 
     fun generate(prompt: String) {

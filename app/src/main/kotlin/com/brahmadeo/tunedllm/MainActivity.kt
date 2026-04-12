@@ -35,7 +35,10 @@ class MainActivity : ComponentActivity() {
                     val state by viewModel.uiState.collectAsState()
                     
                     if (state.isModelLoaded) {
-                        ChatScreen(viewModel = viewModel)
+                        ChatScreen(
+                            viewModel = viewModel,
+                            onModelPicker = { modelPicker.launch("*/*") }
+                        )
                     } else {
                         Box(
                             modifier = Modifier.fillMaxSize(),

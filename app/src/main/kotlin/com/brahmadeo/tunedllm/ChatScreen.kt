@@ -17,16 +17,28 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import dev.jeziellago.compose.markdowntext.MarkdownText
+import androidx.compose.runtime.DisposableEffect
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(viewModel: LlmViewModel) {
+fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
     var showTemplateDialog by remember { mutableStateOf(false) }
+
+    val currentView = LocalView.current
+    DisposableEffect(state.isGenerating) {
+        if (state.isGenerating) {
+            currentView.keepScreenOn = true
+        }
+        onDispose {
+            currentView.keepScreenOn = false
+        }
+    }
 
     val isAtBottom by remember {
         derivedStateOf {
@@ -90,44 +102,67 @@ fun ChatScreen(viewModel: LlmViewModel) {
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet {
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    onClick = { 
-                        viewModel.createNewSession()
-                        scope.launch { drawerState.close() }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("New Chat")
-                }
-                Divider(modifier = Modifier.padding(vertical = 8.dp))
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(state.sessions) { session ->
-                        NavigationDrawerItem(
-                            label = { 
-                                Text(
-                                    text = session.title,
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            },
-                            selected = session.id == state.currentSessionId,
-                            onClick = {
-                                viewModel.selectSession(session.id)
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { 
+                            viewModel.createNewSession()
+                            scope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("New Chat")
+                    }
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(state.sessions) { session ->
+                            NavigationDrawerItem(
+                                label = { 
+                                    Text(
+                                        text = session.title,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                },
+                                selected = session.id == state.currentSessionId,
+                                onClick = {
+                                    viewModel.selectSession(session.id)
+                                    scope.launch { drawerState.close() }
+                                },
+                                badge = {
+                                    IconButton(onClick = { viewModel.deleteSession(session.id) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                                    }
+                                },
+                                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                            )
+                        }
+                    }
+
+                    Divider()
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Model: ${state.lastModelPath?.substringAfterLast("/") ?: "None"}",
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { 
+                                viewModel.unloadModel()
+                                onModelPicker()
                                 scope.launch { drawerState.close() }
                             },
-                            badge = {
-                                IconButton(onClick = { viewModel.deleteSession(session.id) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                                }
-                            },
-                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                        )
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Change Model")
+                        }
                     }
                 }
             }

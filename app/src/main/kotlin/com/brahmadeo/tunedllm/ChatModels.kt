@@ -21,6 +21,7 @@ data class ChatState(
     val currentSessionId: String? = null,
     val isGenerating: Boolean = false,
     val isModelLoaded: Boolean = false,
+    val lastModelPath: String? = null,
     val isCopying: Boolean = false,
     val copyProgress: Float = 0f,
     val chatTemplate: String = "<start_of_turn>user\n{{prompt}}<end_of_turn>\n<start_of_turn>model\n",
