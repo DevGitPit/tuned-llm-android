@@ -23,8 +23,41 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(ChatState())
     val uiState: StateFlow<ChatState> = _uiState.asStateFlow()
 
+    private val db = ChatDatabase.getDatabase(application)
+    private val chatDao = db.chatDao()
+
     private var llmService: LlmService? = null
     private var isBound = false
+
+    init {
+        viewModelScope.launch {
+            chatDao.getAllSessionsWithMessages().collect { sessionsWithMessages ->
+                val sessions = sessionsWithMessages.map { swm ->
+                    ChatSession(
+                        id = swm.session.id,
+                        title = swm.session.title,
+                        messages = swm.messages.map { msg ->
+                            ChatMessage(
+                                id = msg.id,
+                                role = Role.valueOf(msg.role),
+                                content = msg.content
+                            )
+                        }.sortedBy { swm.messages.find { m -> m.id == it.id }?.timestamp }
+                    )
+                }
+                _uiState.update { it.copy(sessions = sessions) }
+                
+                // If no current session selected, pick the first one from DB or create new
+                if (_uiState.value.currentSessionId == null) {
+                    if (sessions.isNotEmpty()) {
+                        _uiState.update { it.copy(currentSessionId = sessions.first().id) }
+                    } else {
+                        createNewSession()
+                    }
+                }
+            }
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -53,11 +86,10 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createNewSession() {
         val newId = UUID.randomUUID().toString()
-        val newSession = ChatSession(newId, "New Chat")
-        _uiState.update { it.copy(
-            sessions = it.sessions + newSession,
-            currentSessionId = newId
-        ) }
+        _uiState.update { it.copy(currentSessionId = newId) }
+        viewModelScope.launch {
+            chatDao.insertSession(SessionEntity(newId, "New Chat"))
+        }
     }
 
     fun selectSession(sessionId: String) {
@@ -66,17 +98,17 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSession(sessionId: String) {
+        val currentId = _uiState.value.currentSessionId
         _uiState.update { state ->
             val updatedSessions = state.sessions.filter { it.id != sessionId }
             var nextSessionId = state.currentSessionId
             if (state.currentSessionId == sessionId) {
                 nextSessionId = updatedSessions.lastOrNull()?.id
             }
-            state.copy(sessions = updatedSessions, currentSessionId = nextSessionId).also {
-                if (it.sessions.isEmpty()) {
-                    createNewSession()
-                }
-            }
+            state.copy(currentSessionId = nextSessionId)
+        }
+        viewModelScope.launch {
+            chatDao.deleteSession(sessionId)
         }
     }
 
@@ -158,6 +190,14 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
+        viewModelScope.launch {
+            chatDao.insertMessage(MessageEntity(userMsgId, currentSessionId, Role.USER.name, prompt))
+            val session = _uiState.value.sessions.find { it.id == currentSessionId }
+            if (session != null && session.title != "New Chat") {
+                chatDao.updateSession(SessionEntity(currentSessionId, session.title))
+            }
+        }
+
         // Build the Gemma chat template with full history
         val promptBuilder = StringBuilder()
         for (msg in history) {
@@ -191,6 +231,12 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 override fun onComplete() {
+                    val finalMsg = _uiState.value.messages.lastOrNull { it.id == assistantMsgId }
+                    if (finalMsg != null) {
+                        viewModelScope.launch {
+                            chatDao.insertMessage(MessageEntity(assistantMsgId, currentSessionId, Role.ASSISTANT.name, finalMsg.content))
+                        }
+                    }
                     _uiState.update { it.copy(isGenerating = false) }
                 }
 
