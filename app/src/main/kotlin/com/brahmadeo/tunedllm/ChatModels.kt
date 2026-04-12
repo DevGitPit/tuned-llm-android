@@ -20,6 +20,7 @@ data class ChatState(
     val sessions: List<ChatSession> = emptyList(),
     val currentSessionId: String? = null,
     val isGenerating: Boolean = false,
+    val currentTps: Float? = null,
     val isModelLoaded: Boolean = false,
     val isAutoLoading: Boolean = false,
     val lastModelPath: String? = null,

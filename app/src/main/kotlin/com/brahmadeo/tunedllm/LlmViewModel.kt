@@ -320,9 +320,18 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         val formattedPrompt = promptBuilder.toString()
         Log.d("LlmViewModel", "Sending prompt to JNI: $formattedPrompt")
 
+        var tokenCount = 0
+        var startTime = 0L
+
         viewModelScope.launch(Dispatchers.IO) {
             llmService?.llmManager?.generate(formattedPrompt, object : LlmCallback {
                 override fun onToken(token: String) {
+                    if (startTime == 0L) startTime = System.currentTimeMillis()
+                    tokenCount++
+                    
+                    val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000f
+                    val tps = if (elapsedSeconds > 0) tokenCount / elapsedSeconds else 0f
+
                     _uiState.update { state ->
                         val updatedSessions = state.sessions.map { session ->
                             if (session.id == currentSessionId) {
@@ -337,7 +346,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                                 session
                             }
                         }
-                        state.copy(sessions = updatedSessions)
+                        state.copy(sessions = updatedSessions, currentTps = tps)
                     }
                 }
 
@@ -346,15 +355,15 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                     if (finalMsg != null) {
                         viewModelScope.launch {
                             chatDao.insertMessage(MessageEntity(assistantMsgId, currentSessionId, Role.ASSISTANT.name, finalMsg.content))
-                            _uiState.update { it.copy(isGenerating = false) }
+                            _uiState.update { it.copy(isGenerating = false, currentTps = null) }
                         }
                     } else {
-                        _uiState.update { it.copy(isGenerating = false) }
+                        _uiState.update { it.copy(isGenerating = false, currentTps = null) }
                     }
                 }
 
                 override fun onError(message: String) {
-                    _uiState.update { it.copy(isGenerating = false, error = message) }
+                    _uiState.update { it.copy(isGenerating = false, error = message, currentTps = null) }
                 }
             })
         }

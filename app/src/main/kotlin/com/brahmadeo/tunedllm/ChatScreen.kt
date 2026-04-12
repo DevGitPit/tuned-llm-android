@@ -224,21 +224,31 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                                 maxLines = 4
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    if (state.isGenerating) {
-                                        viewModel.stopGeneration()
-                                    } else {
-                                        if (inputText.isNotBlank()) {
-                                            viewModel.generate(inputText)
-                                            inputText = ""
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                if (state.isGenerating && state.currentTps != null) {
+                                    Text(
+                                        text = "${"%.1f".format(state.currentTps)} t/s",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                }
+                                Button(
+                                    onClick = {
+                                        if (state.isGenerating) {
+                                            viewModel.stopGeneration()
+                                        } else {
+                                            if (inputText.isNotBlank()) {
+                                                viewModel.generate(inputText)
+                                                inputText = ""
+                                            }
                                         }
-                                    }
-                                },
-                                enabled = state.isModelLoaded,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(if (state.isGenerating) "Stop" else "Send")
+                                    },
+                                    enabled = state.isModelLoaded,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(if (state.isGenerating) "Stop" else "Send")
+                                }
                             }
                         }
                     }
@@ -382,7 +392,7 @@ fun MarkdownContent(content: String, textColor: Color, viewModel: LlmViewModel) 
                     } else if (text.isNotBlank()) {
                         MarkdownText(
                             markdown = text,
-                            style = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+                            style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
                             syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
                         )
                     }
