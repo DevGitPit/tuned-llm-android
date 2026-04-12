@@ -45,6 +45,41 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_IMPORTANT)
     }
 
+    private fun ensureSession() {
+        if (_uiState.value.sessions.isEmpty()) {
+            createNewSession()
+        }
+    }
+
+    fun createNewSession() {
+        val newId = UUID.randomUUID().toString()
+        val newSession = ChatSession(newId, "New Chat")
+        _uiState.update { it.copy(
+            sessions = it.sessions + newSession,
+            currentSessionId = newId
+        ) }
+    }
+
+    fun selectSession(sessionId: String) {
+        if (_uiState.value.currentSessionId == sessionId) return
+        _uiState.update { it.copy(currentSessionId = sessionId) }
+    }
+
+    fun deleteSession(sessionId: String) {
+        _uiState.update { state ->
+            val updatedSessions = state.sessions.filter { it.id != sessionId }
+            var nextSessionId = state.currentSessionId
+            if (state.currentSessionId == sessionId) {
+                nextSessionId = updatedSessions.lastOrNull()?.id
+            }
+            state.copy(sessions = updatedSessions, currentSessionId = nextSessionId).also {
+                if (it.sessions.isEmpty()) {
+                    createNewSession()
+                }
+            }
+        }
+    }
+
     fun updateChatTemplate(template: String) {
         _uiState.update { it.copy(chatTemplate = template) }
     }
@@ -82,6 +117,9 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     fun generate(prompt: String) {
         if (!isBound || !_uiState.value.isModelLoaded) return
         
+        ensureSession()
+        val currentSessionId = _uiState.value.currentSessionId ?: return
+
         val userMsgId = UUID.randomUUID().toString()
         val assistantMsgId = UUID.randomUUID().toString()
 
@@ -100,11 +138,25 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         val history = sanitizedMessages + userMsg
         val assistantMsg = ChatMessage(assistantMsgId, Role.ASSISTANT, "")
 
-        _uiState.update { it.copy(
-            messages = history + assistantMsg,
-            isGenerating = true,
-            error = null
-        ) }
+        _uiState.update { state ->
+            val updatedSessions = state.sessions.map { session ->
+                if (session.id == currentSessionId) {
+                    val newTitle = if (session.title == "New Chat" && prompt.isNotBlank()) {
+                        prompt.take(20).plus(if (prompt.length > 20) "..." else "")
+                    } else {
+                        session.title
+                    }
+                    session.copy(title = newTitle, messages = history + assistantMsg)
+                } else {
+                    session
+                }
+            }
+            state.copy(
+                sessions = updatedSessions,
+                isGenerating = true,
+                error = null
+            )
+        }
 
         // Build the Gemma chat template with full history
         val promptBuilder = StringBuilder()
@@ -121,13 +173,20 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             llmService?.llmManager?.generate(formattedPrompt, object : LlmCallback {
                 override fun onToken(token: String) {
                     _uiState.update { state ->
-                        val lastMessage = state.messages.lastOrNull()
-                        if (lastMessage?.id == assistantMsgId) {
-                            val updatedMessages = state.messages.dropLast(1) + lastMessage.copy(content = lastMessage.content + token)
-                            state.copy(messages = updatedMessages)
-                        } else {
-                            state
+                        val updatedSessions = state.sessions.map { session ->
+                            if (session.id == currentSessionId) {
+                                val lastMsg = session.messages.lastOrNull()
+                                if (lastMsg?.id == assistantMsgId) {
+                                    val updatedMessages = session.messages.dropLast(1) + lastMsg.copy(content = lastMsg.content + token)
+                                    session.copy(messages = updatedMessages)
+                                } else {
+                                    session
+                                }
+                            } else {
+                                session
+                            }
                         }
+                        state.copy(sessions = updatedSessions)
                     }
                 }
 

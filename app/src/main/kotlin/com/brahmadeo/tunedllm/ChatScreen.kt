@@ -7,9 +7,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -79,80 +83,139 @@ fun ChatScreen(viewModel: LlmViewModel) {
         )
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Tuned LLM Chat") },
-                actions = {
-                    IconButton(onClick = { showTemplateDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.primary
-                )
-            )
-        },
-        bottomBar = {
-            Surface(tonalElevation = 8.dp) {
-                Column(
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = { 
+                        viewModel.createNewSession()
+                        scope.launch { drawerState.close() }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    if (state.error != null) {
-                        Text(
-                            text = "Error: ${state.error}",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextField(
-                            value = inputText,
-                            onValueChange = { inputText = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("Enter prompt...") },
-                            maxLines = 4
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("New Chat")
+                }
+                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(state.sessions) { session ->
+                        NavigationDrawerItem(
+                            label = { 
+                                Text(
+                                    text = session.title,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            },
+                            selected = session.id == state.currentSessionId,
                             onClick = {
-                                if (state.isGenerating) {
-                                    viewModel.stopGeneration()
-                                } else {
-                                    if (inputText.isNotBlank()) {
-                                        viewModel.generate(inputText)
-                                        inputText = ""
-                                    }
+                                viewModel.selectSession(session.id)
+                                scope.launch { drawerState.close() }
+                            },
+                            badge = {
+                                IconButton(onClick = { viewModel.deleteSession(session.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                                 }
                             },
-                            enabled = state.isModelLoaded,
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(if (state.isGenerating) "Stop" else "Send")
-                        }
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                        )
                     }
                 }
             }
         }
-    ) { paddingValues ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(state.messages, key = { it.id }) { message ->
-                ChatMessageItem(message)
-                Spacer(modifier = Modifier.height(8.dp))
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { 
+                        val currentTitle = state.sessions.find { it.id == state.currentSessionId }?.title ?: "Tuned LLM Chat"
+                        Text(currentTitle) 
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showTemplateDialog = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            },
+            bottomBar = {
+                Surface(tonalElevation = 8.dp) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    ) {
+                        if (state.error != null) {
+                            Text(
+                                text = "Error: ${state.error}",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextField(
+                                value = inputText,
+                                onValueChange = { inputText = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("Enter prompt...") },
+                                maxLines = 4
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (state.isGenerating) {
+                                        viewModel.stopGeneration()
+                                    } else {
+                                        if (inputText.isNotBlank()) {
+                                            viewModel.generate(inputText)
+                                            inputText = ""
+                                        }
+                                    }
+                                },
+                                enabled = state.isModelLoaded,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(if (state.isGenerating) "Stop" else "Send")
+                            }
+                        }
+                    }
+                }
+            }
+        ) { paddingValues ->
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(state.messages, key = { it.id }) { message ->
+                    ChatMessageItem(message)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
         }
     }
