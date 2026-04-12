@@ -1,0 +1,53 @@
+# Gradle files
+.gradle/
+build/
+app/build/
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+local.properties
+Captures/
+.externalNativeBuild/
+.cxx/
+app/.cxx/
+
+# Native build artifacts
+*.so
+*.o
+*.a
+*.obj
+*.exe
+*.dll
+*.dylib
+*.apk
+*.ap_
+*.dex
+*.class
+
+# Project specific
+kls_database.db
+.dual-graph/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+
+# Temp files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Other build artifacts
+bin/
+gen/
+out/

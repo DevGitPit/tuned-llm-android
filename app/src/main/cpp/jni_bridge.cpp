@@ -14,6 +14,7 @@ struct {
     llama_model* model = nullptr;
     llama_context* ctx = nullptr;
     std::atomic<bool> stop_flag{false};
+    std::vector<llama_token> previous_tokens;
 } g_state;
 
 static JavaVM* g_vm = nullptr;
@@ -69,6 +70,8 @@ Java_com_brahmadeo_tunedllm_LlmManager_loadModel(JNIEnv* env, jobject thiz, jstr
         return 0;
     }
 
+    g_state.previous_tokens.clear();
+
     return reinterpret_cast<jlong>(g_state.model);
 }
 
@@ -93,12 +96,6 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
             throw std::runtime_error("Model, context or vocab not initialized");
         }
 
-        // Reset memory for a new session
-        llama_memory_t mem = llama_get_memory(g_state.ctx);
-        if (mem) {
-            llama_memory_clear(mem, true);
-        }
-
         // Tokenize prompt
         std::vector<llama_token> prompt_tokens(prompt_str.size() + 2);
         int n_prompt_tokens = llama_tokenize(vocab, prompt_str.c_str(), prompt_str.size(), prompt_tokens.data(), prompt_tokens.size(), true, true);
@@ -108,38 +105,61 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
         prompt_tokens.resize(n_prompt_tokens);
         LOGI("Prompt tokenized into %zu tokens", prompt_tokens.size());
 
-        int n_past = 0;
+        // Cache reuse check
+        size_t n_past = 0;
+        while (n_past < g_state.previous_tokens.size() && 
+               n_past < prompt_tokens.size() && 
+               g_state.previous_tokens[n_past] == prompt_tokens[n_past]) {
+            n_past++;
+        }
+
+        llama_memory_t mem = llama_get_memory(g_state.ctx);
+        if (n_past < g_state.previous_tokens.size()) {
+            LOGI("Partial cache hit: n_past = %zu. Clearing %zu stale tokens.", n_past, g_state.previous_tokens.size() - n_past);
+            if (n_past == 0) {
+                if (mem) llama_memory_clear(mem, true);
+            } else {
+                if (mem) llama_memory_seq_rm(mem, 0, (llama_pos)n_past, -1);
+            }
+        } else {
+            LOGI("Cache hit: n_past = %zu. No clearing needed.", n_past);
+        }
+
         int n_batch = llama_n_batch(g_state.ctx);
+        std::vector<llama_token> session_tokens = prompt_tokens;
 
         // Prompt Processing (KV Cache Fill)
-        for (size_t i = 0; i < prompt_tokens.size(); i += n_batch) {
+        for (size_t i = n_past; i < prompt_tokens.size(); i += n_batch) {
             if (g_state.stop_flag.load()) break;
 
             int n_eval = (int)std::min((size_t)n_batch, prompt_tokens.size() - i);
             batch.n_tokens = 0;
 
             for (int j = 0; j < n_eval; ++j) {
-                batch_add(batch, prompt_tokens[i + j], n_past + j, {0}, j == n_eval - 1);
+                batch_add(batch, prompt_tokens[i + j], (llama_pos)(i + j), {0}, j == n_eval - 1);
             }
 
             int decode_res = llama_decode(g_state.ctx, batch);
             if (decode_res != 0) {
-                LOGE("llama_decode failed during prompt processing with code: %d at n_past: %d", decode_res, n_past);
+                LOGE("llama_decode failed during prompt processing with code: %d at i: %zu", decode_res, i);
                 throw std::runtime_error("llama_decode failed (" + std::to_string(decode_res) + ")");
             }
-            n_past += n_eval;
         }
+        
+        n_past = prompt_tokens.size();
 
         // Generation Loop
         smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.8f));
         llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
-        LOGI("Starting generation loop at n_past: %d", n_past);
+        LOGI("Starting generation loop at n_past: %zu", n_past);
 
         while (n_past < llama_n_ctx(g_state.ctx)) {
             if (g_state.stop_flag.load()) break;
             llama_token new_token_id = llama_sampler_sample(smpl, g_state.ctx, -1);
+            
+            session_tokens.push_back(new_token_id);
 
             if (llama_vocab_is_eog(vocab, new_token_id)) {
                 LOGI("EOG token detected: %d", new_token_id);
@@ -199,11 +219,14 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
             n_past++;
         }
 
+        g_state.previous_tokens = session_tokens;
+
         if (!g_state.stop_flag.load()) {
             env->CallVoidMethod(callback_global, onComplete_id);
         }
 
     } catch (const std::exception& e) {
+        g_state.previous_tokens.clear();
         LOGE("Inference error: %s", e.what());
         jstring jmsg = env->NewStringUTF(e.what());
         env->CallVoidMethod(callback_global, onError_id, jmsg);
@@ -249,4 +272,5 @@ Java_com_brahmadeo_tunedllm_LlmManager_unloadModel(JNIEnv* env, jobject thiz) {
         llama_model_free(g_state.model);
         g_state.model = nullptr;
     }
+    g_state.previous_tokens.clear();
 }
