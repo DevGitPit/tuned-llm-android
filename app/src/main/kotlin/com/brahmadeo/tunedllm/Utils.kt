@@ -19,13 +19,13 @@ fun getDeviceRamInfo(context: Context): RamInfo {
 
     val totalBytes = memoryInfo.totalMem
     val availableBytes = memoryInfo.availMem
-    val recommendedMaxBytes = availableBytes - (800 * 1024 * 1024)
+    val recommendedMaxBytes = availableBytes - (500 * 1024 * 1024) // 500MB headroom
     val recommendedMaxGB = recommendedMaxBytes.toFloat() / (1024 * 1024 * 1024)
 
     val preferredQuants = when {
         recommendedMaxGB >= 5.0f -> listOf("IQ4_NL", "Q4_K_M", "Q5_K_M", "Q5_K_S")
         recommendedMaxGB >= 3.5f -> listOf("IQ4_NL", "Q4_K_M", "Q4_K_S", "IQ4_XS")
-        recommendedMaxGB >= 3.0f -> listOf("Q4_K_S", "IQ4_XS", "IQ4_NL", "Q3_K_M")
+        recommendedMaxGB >= 3.0f -> listOf("IQ4_NL", "Q4_K_S", "IQ4_XS", "Q3_K_M")
         recommendedMaxGB >= 2.5f -> listOf("Q3_K_M", "Q3_K_S", "IQ3_M")
         else -> listOf("Q2_K", "IQ2_M")
     }

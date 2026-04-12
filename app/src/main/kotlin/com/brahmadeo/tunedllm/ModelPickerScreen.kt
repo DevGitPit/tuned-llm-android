@@ -155,7 +155,7 @@ fun RamStatusCard(ramInfo: RamInfo?, onRefresh: () -> Unit) {
             if (ramInfo != null) {
                 val availableGB = ramInfo.availableBytes.toFloat() / (1024 * 1024 * 1024)
                 val totalGB = ramInfo.totalBytes.toFloat() / (1024 * 1024 * 1024)
-                val usedRatio = 1f - (ramInfo.availableBytes.toFloat() / ramInfo.totalBytes)
+                val availableRatio = ramInfo.availableBytes.toFloat() / ramInfo.totalBytes
 
                 Text("Available RAM: ${"%.1f".format(availableGB)} GB")
                 Text("Total RAM: ${"%.1f".format(totalGB)} GB", style = MaterialTheme.typography.bodySmall)
@@ -163,13 +163,13 @@ fun RamStatusCard(ramInfo: RamInfo?, onRefresh: () -> Unit) {
                 Spacer(modifier = Modifier.height(8.dp))
 
                 val progressColor = when {
-                    availableGB > 4.0f -> Color(0xFF4CAF50)
-                    availableGB > 2.5f -> Color(0xFFFFC107)
+                    availableGB >= 4.0f -> Color(0xFF4CAF50)
+                    availableGB >= 2.5f -> Color(0xFFFFC107)
                     else -> Color(0xFFF44336)
                 }
 
                 LinearProgressIndicator(
-                    progress = usedRatio,
+                    progress = { availableRatio },
                     modifier = Modifier.fillMaxWidth().height(8.dp),
                     color = progressColor,
                     trackColor = progressColor.copy(alpha = 0.2f)
@@ -177,7 +177,7 @@ fun RamStatusCard(ramInfo: RamInfo?, onRefresh: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Close background apps for more headroom before loading",
+                    text = "RAM reading is a snapshot — actual availability may vary. If loading fails, close more apps and retry.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
