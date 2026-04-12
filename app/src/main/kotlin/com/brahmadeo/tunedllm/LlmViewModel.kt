@@ -1,14 +1,12 @@
 package com.brahmadeo.tunedllm
 
 import android.app.Application
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
+import android.content.*
 import android.net.Uri
 import android.os.IBinder
 import android.provider.OpenableColumns
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -217,6 +215,13 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         llmService?.llmManager?.unloadModel()
         _uiState.update { it.copy(isModelLoaded = false, lastModelPath = null, modelName = null) }
         prefs.edit().remove("last_model_path").remove("last_model_name").apply()
+    }
+
+    fun copyToClipboard(text: String) {
+        val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Tuned LLM", text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(getApplication(), "Copied to clipboard", Toast.LENGTH_SHORT).show()
     }
 
     fun generate(prompt: String) {

@@ -5,12 +5,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
@@ -181,6 +179,14 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                         }
                     },
                     actions = {
+                        IconButton(onClick = { 
+                            val chatText = state.messages.joinToString("\n\n") { 
+                                "${if (it.role == Role.USER) "USER" else "ASSISTANT"}: ${it.content}" 
+                            }
+                            viewModel.copyToClipboard(chatText)
+                        }) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Chat")
+                        }
                         IconButton(onClick = { showTemplateDialog = true }) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
@@ -248,7 +254,7 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
                 items(state.messages, key = { it.id }) { message ->
-                    ChatMessageItem(message)
+                    ChatMessageItem(message, viewModel)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
@@ -257,7 +263,7 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
 }
 
 @Composable
-fun ChatMessageItem(message: ChatMessage) {
+fun ChatMessageItem(message: ChatMessage, viewModel: LlmViewModel) {
     val isUser = message.role == Role.USER
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val containerColor = if (isUser) {
@@ -286,12 +292,27 @@ fun ChatMessageItem(message: ChatMessage) {
             ),
             tonalElevation = 2.dp
         ) {
-            MarkdownText(
-                markdown = message.content,
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium.copy(color = contentColor),
-                syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
-            )
+            Column {
+                MarkdownContent(message.content, contentColor, viewModel)
+                
+                // Message-level copy button at the bottom of the bubble
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(4.dp),
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    IconButton(
+                        onClick = { viewModel.copyToClipboard(message.content) },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy, 
+                            contentDescription = "Copy Message",
+                            tint = contentColor.copy(alpha = 0.6f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
         }
         Text(
             text = if (isUser) "You" else "Assistant",
@@ -299,5 +320,74 @@ fun ChatMessageItem(message: ChatMessage) {
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         )
+    }
+}
+
+@Composable
+fun MarkdownContent(content: String, textColor: Color, viewModel: LlmViewModel) {
+    // Basic code block splitting logic
+    val parts = remember(content) {
+        val regex = Regex("```[a-zA-Z]*\\n?([\\s\\S]*?)```")
+        val matches = regex.findAll(content)
+        val result = mutableListOf<Pair<String, Boolean>>() // text to isCodeBlock
+        
+        var lastIndex = 0
+        for (match in matches) {
+            if (match.range.first > lastIndex) {
+                result.add(content.substring(lastIndex, match.range.first) to false)
+            }
+            // Group 1 is the code content
+            result.add(match.groupValues[1] to true)
+            lastIndex = match.range.last + 1
+        }
+        if (lastIndex < content.length) {
+            result.add(content.substring(lastIndex) to false)
+        }
+        if (result.isEmpty()) result.add(content to false)
+        result
+    }
+
+    Column(modifier = Modifier.padding(12.dp)) {
+        SelectionContainer {
+            Column {
+                parts.forEach { (text, isCode) ->
+                    if (isCode) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.05f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
+                        ) {
+                            Column {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    TextButton(
+                                        onClick = { viewModel.copyToClipboard(text) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Copy", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                                Text(
+                                    text = text.trim(),
+                                    style = MaterialTheme.typography.bodySmall.copy(color = textColor),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    } else if (text.isNotBlank()) {
+                        MarkdownText(
+                            markdown = text,
+                            style = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+                            syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
