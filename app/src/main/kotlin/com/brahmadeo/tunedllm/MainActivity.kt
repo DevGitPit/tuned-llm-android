@@ -34,7 +34,9 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val state by viewModel.uiState.collectAsState()
                     
-                    if (state.isModelLoaded) {
+                    if (!viewModel.isModelEverLoaded && !state.isModelLoaded) {
+                        ModelPickerScreen(viewModel = viewModel)
+                    } else if (state.isModelLoaded) {
                         ChatScreen(
                             viewModel = viewModel,
                             onModelPicker = { modelPicker.launch("*/*") }
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
                                         Text(state.modelName!!, style = MaterialTheme.typography.bodySmall)
                                     }
                                 } else {
+                                    // This case happens if auto-load failed or model was unloaded
                                     Button(onClick = { modelPicker.launch("*/*") }) {
                                         Text("Select GGUF Model")
                                     }

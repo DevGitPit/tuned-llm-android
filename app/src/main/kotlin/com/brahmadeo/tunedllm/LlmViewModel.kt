@@ -26,10 +26,22 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     private val chatDao = db.chatDao()
     private val prefs = application.getSharedPreferences("tuned_llm_prefs", Context.MODE_PRIVATE)
 
+    private val _ramInfo = MutableStateFlow<RamInfo?>(null)
+    val ramInfo: StateFlow<RamInfo?> = _ramInfo.asStateFlow()
+
+    private val _selectedFileSize = MutableStateFlow<Long?>(null)
+    val selectedFileSize: StateFlow<Long?> = _selectedFileSize.asStateFlow()
+
+    private var selectedUri: Uri? = null
+
+    val isModelEverLoaded: Boolean
+        get() = prefs.getBoolean("model_ever_loaded", false)
+
     private var llmService: LlmService? = null
     private var isBound = false
 
     init {
+        refreshRamInfo(application)
         val savedModelPath = prefs.getString("last_model_path", null)
         val savedModelName = prefs.getString("last_model_name", null)
         _uiState.update { it.copy(
@@ -193,6 +205,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.edit()
                     .putString("last_model_path", path)
                     .putString("last_model_name", modelName)
+                    .putBoolean("model_ever_loaded", true)
                     .apply()
                 _uiState.update { it.copy(
                     isModelLoaded = true, 
@@ -215,6 +228,25 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         llmService?.llmManager?.unloadModel()
         _uiState.update { it.copy(isModelLoaded = false, lastModelPath = null, modelName = null) }
         prefs.edit().remove("last_model_path").remove("last_model_name").apply()
+    }
+
+    fun refreshRamInfo(context: Context) {
+        _ramInfo.value = getDeviceRamInfo(context)
+    }
+
+    fun onFileSelected(uri: Uri, context: Context) {
+        selectedUri = uri
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                _selectedFileSize.value = cursor.getLong(sizeIndex)
+            }
+        }
+    }
+
+    fun confirmAndLoad() {
+        val uri = selectedUri ?: return
+        loadSelectedModel(uri)
     }
 
     fun copyToClipboard(text: String) {
