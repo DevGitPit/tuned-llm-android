@@ -42,6 +42,7 @@ data class SessionWithMessages(
 
 @Dao
 interface ChatDao {
+    @Transaction
     @Query("SELECT * FROM sessions ORDER BY createdAt DESC")
     fun getAllSessionsWithMessages(): Flow<List<SessionWithMessages>>
 
