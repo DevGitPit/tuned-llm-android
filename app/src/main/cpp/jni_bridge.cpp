@@ -31,32 +31,45 @@ static std::atomic<bool> g_is_generating{false};
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_vm = vm;
-    
 #ifdef GGML_USE_OPENBLAS
-    LOGI("Setting OpenBLAS threads to 1 for better stability");
     openblas_set_num_threads(1);
 #endif
-
     return JNI_VERSION_1_6;
 }
 
-// Helper to safely create a JNI string from potentially invalid UTF-8
-static jstring safe_new_string_utf(JNIEnv* env, const char* str) {
-    if (!str) return nullptr;
-    jstring result = env->NewStringUTF(str);
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        LOGW("Invalid UTF-8 detected in piece, returning placeholder");
-        return env->NewStringUTF("");
+// Helper to validate and sanitize UTF-8 for JNI
+static bool is_valid_utf8(const char* str) {
+    if (!str) return false;
+    const unsigned char* bytes = (const unsigned char*)str;
+    while (*bytes) {
+        if ((bytes[0] & 0x80) == 0x00) {
+            bytes++;
+        } else if ((bytes[0] & 0xE0) == 0xC0) {
+            if ((bytes[1] & 0xC0) != 0x80) return false;
+            bytes += 2;
+        } else if ((bytes[0] & 0xF0) == 0xE0) {
+            if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80) return false;
+            bytes += 3;
+        } else if ((bytes[0] & 0xF8) == 0xF0) {
+            if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80 || (bytes[3] & 0xC0) != 0x80) return false;
+            bytes += 4;
+        } else {
+            return false;
+        }
     }
-    if (!result) {
-        LOGW("Failed to create JNI string, returning placeholder");
-        return env->NewStringUTF("");
-    }
-    return result;
+    return true;
 }
 
-// Helper to add a token to a batch
+static jstring safe_new_string_utf(JNIEnv* env, const char* str) {
+    if (!str || !*str) return env->NewStringUTF("");
+    if (is_valid_utf8(str)) {
+        jstring res = env->NewStringUTF(str);
+        if (res) return res;
+    }
+    LOGW("Invalid or partial UTF-8 detected, skipping piece to prevent crash");
+    return env->NewStringUTF("");
+}
+
 static void batch_add(struct llama_batch & batch, llama_token id, llama_pos pos, const std::vector<llama_seq_id> & seq_ids, bool logits) {
     batch.token   [batch.n_tokens] = id;
     batch.pos     [batch.n_tokens] = pos;
@@ -68,16 +81,13 @@ static void batch_add(struct llama_batch & batch, llama_token id, llama_pos pos,
     batch.n_tokens++;
 }
 
-static void inference_thread(jobject callback_global, std::string prompt_str, std::vector<std::string> stop_strings) {
+static void inference_thread(jobject callback_global, std::string prompt_str, std::vector<std::string> stop_strings, float temp, float top_p, int top_k, float penalty) {
     g_is_generating = true;
     JNIEnv* env;
     if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
-        LOGE("Failed to attach current thread");
         g_is_generating = false;
         return;
     }
-
-    LOGI("Inference thread starting");
 
     jclass callback_class = env->GetObjectClass(callback_global);
     jmethodID onToken_id = env->GetMethodID(callback_class, "onToken", "(Ljava/lang/String;)V");
@@ -89,156 +99,93 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
     llama_sampler* smpl = nullptr;
 
     try {
-        if (!g_state.model || !g_state.ctx || !vocab) {
-            throw std::runtime_error("Model, context or vocab not initialized");
-        }
+        if (!g_state.model || !g_state.ctx || !vocab) throw std::runtime_error("Engine not initialized");
 
-        // Tokenize prompt
         std::vector<llama_token> prompt_tokens(prompt_str.size() + 4);
         int n_prompt_tokens = llama_tokenize(vocab, prompt_str.c_str(), prompt_str.size(), prompt_tokens.data(), prompt_tokens.size(), true, true);
-        if (n_prompt_tokens < 0) {
-            throw std::runtime_error("Tokenization failed");
-        }
+        if (n_prompt_tokens < 0) throw std::runtime_error("Tokenization failed");
         prompt_tokens.resize(n_prompt_tokens);
-        LOGI("Prompt tokenized into %zu tokens", prompt_tokens.size());
 
-        // Cache reuse check
         size_t n_past = 0;
-        while (n_past < g_state.previous_tokens.size() && 
-               n_past < prompt_tokens.size() && 
-               g_state.previous_tokens[n_past] == prompt_tokens[n_past]) {
+        while (n_past < g_state.previous_tokens.size() && n_past < prompt_tokens.size() && g_state.previous_tokens[n_past] == prompt_tokens[n_past]) {
             n_past++;
         }
 
         llama_memory_t mem = llama_get_memory(g_state.ctx);
         if (n_past < g_state.previous_tokens.size()) {
-            LOGI("Partial cache hit: n_past = %zu. Clearing stale tokens from KV cache.", n_past);
-            if (n_past == 0) {
-                if (mem) llama_memory_clear(mem, true);
-            } else {
-                if (mem) llama_memory_seq_rm(mem, -1, (llama_pos)n_past, -1);
-            }
-        } else {
-            LOGI("Cache hit: n_past = %zu. No clearing needed.", n_past);
+            LOGI("Clearing stale cache from position %zu", n_past);
+            if (mem) llama_memory_seq_rm(mem, -1, (llama_pos)n_past, -1);
         }
 
-        if (prompt_tokens.size() > (size_t)llama_n_ctx(g_state.ctx)) {
-            LOGE("Prompt too long (%zu) for context window (%d)", prompt_tokens.size(), llama_n_ctx(g_state.ctx));
-            throw std::runtime_error("Prompt exceeds context window limit");
-        }
+        if (prompt_tokens.size() >= (size_t)llama_n_ctx(g_state.ctx)) throw std::runtime_error("Prompt too long for context");
 
         int n_batch = llama_n_batch(g_state.ctx);
         std::vector<llama_token> session_tokens = prompt_tokens;
 
-        // Prompt Processing (KV Cache Fill)
-        bool prompt_interrupted = false;
         for (size_t i = n_past; i < prompt_tokens.size(); i += n_batch) {
-            if (g_state.stop_flag.load()) {
-                LOGI("Prompt processing interrupted");
-                prompt_interrupted = true;
-                break;
-            }
-
+            if (g_state.stop_flag.load()) break;
             int n_eval = (int)std::min((size_t)n_batch, prompt_tokens.size() - i);
             batch.n_tokens = 0;
             for (int j = 0; j < n_eval; ++j) {
                 batch_add(batch, prompt_tokens[i + j], (llama_pos)(i + j), {0}, j == n_eval - 1);
             }
-
-            int decode_res = llama_decode(g_state.ctx, batch);
-            if (decode_res != 0) {
-                LOGE("llama_decode failed during prompt processing with code: %d at i: %zu", decode_res, i);
-                throw std::runtime_error("Prompt processing failed (decode code -1)");
-            }
+            if (llama_decode(g_state.ctx, batch) != 0) throw std::runtime_error("Decode failed during prompt");
         }
         
-        if (prompt_interrupted) {
+        if (g_state.stop_flag.load()) {
             g_state.previous_tokens.clear();
-            if (mem) llama_memory_clear(mem, true);
-            throw std::runtime_error("Generation stopped during prompt processing");
+            if (mem) llama_memory_seq_rm(mem, -1, 0, -1);
+            throw std::runtime_error("Stopped");
         }
 
         n_past = prompt_tokens.size();
-
-        // Generation Loop
+        
+        // Sampling Config
         smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-        llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.8f));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(top_k));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(top_p, 1));
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp(temp));
+        // Add presence penalty if supported by this version's headers, otherwise init_dist
         llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
-        LOGI("Starting generation loop at n_past: %zu", n_past);
-
         while (n_past < (size_t)llama_n_ctx(g_state.ctx)) {
-            if (g_state.stop_flag.load()) {
-                LOGI("Generation interrupted");
-                break;
-            }
-
+            if (g_state.stop_flag.load()) break;
             llama_token new_token_id = llama_sampler_sample(smpl, g_state.ctx, -1);
             session_tokens.push_back(new_token_id);
-
-            if (llama_vocab_is_eog(vocab, new_token_id)) {
-                LOGI("EOG token detected: %d", new_token_id);
-                break;
-            }
+            if (llama_vocab_is_eog(vocab, new_token_id)) break;
 
             char buf[512];
             int n_piece = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
-            std::string piece;
-            if (n_piece < 0) {
-                std::vector<char> dynamic_buf(-n_piece);
-                int actual_piece = llama_token_to_piece(vocab, new_token_id, dynamic_buf.data(), dynamic_buf.size(), 0, true);
-                piece = std::string(dynamic_buf.data(), actual_piece);
-            } else {
-                piece = std::string(buf, n_piece);
-            }
+            std::string piece(buf, n_piece > 0 ? n_piece : 0);
 
             bool stop_found = false;
-            for (const auto& stop_str : stop_strings) {
-                if (!stop_str.empty() && piece.find(stop_str) != std::string::npos) {
-                    LOGI("Stop string detected: %s", stop_str.c_str());
-                    stop_found = true;
-                    break;
-                }
+            for (const auto& s : stop_strings) {
+                if (!s.empty() && piece.find(s) != std::string::npos) { stop_found = true; break; }
             }
             if (stop_found) break;
 
             if (!piece.empty()) {
                 jstring jtoken = safe_new_string_utf(env, piece.c_str());
-                if (jtoken) {
-                    env->CallVoidMethod(callback_global, onToken_id, jtoken);
-                    env->DeleteLocalRef(jtoken);
-                }
+                env->CallVoidMethod(callback_global, onToken_id, jtoken);
+                env->DeleteLocalRef(jtoken);
             }
 
             batch.n_tokens = 0;
             batch_add(batch, new_token_id, (llama_pos)n_past, {0}, true);
-            int decode_res = llama_decode(g_state.ctx, batch);
-            if (decode_res != 0) {
-                LOGE("llama_decode failed during generation with code: %d at n_past: %zu", decode_res, n_past);
-                break; 
-            }
+            if (llama_decode(g_state.ctx, batch) != 0) break;
             n_past++;
         }
 
-        if (n_past >= (size_t)llama_n_ctx(g_state.ctx)) {
-            LOGW("Context window reached: %zu", n_past);
-        }
-
         g_state.previous_tokens = session_tokens;
-
-        if (!g_state.stop_flag.load()) {
-            env->CallVoidMethod(callback_global, onComplete_id);
-        }
+        if (!g_state.stop_flag.load()) env->CallVoidMethod(callback_global, onComplete_id);
 
     } catch (const std::exception& e) {
         g_state.previous_tokens.clear();
-        LOGE("Inference error: %s", e.what());
         jstring jmsg = env->NewStringUTF(e.what());
         env->CallVoidMethod(callback_global, onError_id, jmsg);
         env->DeleteLocalRef(jmsg);
     }
 
-    LOGI("Inference thread finishing");
     if (smpl) llama_sampler_free(smpl);
     llama_batch_free(batch);
     env->DeleteGlobalRef(callback_global);
@@ -246,95 +193,68 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
     g_vm->DetachCurrentThread();
 }
 
-extern "C"
-JNIEXPORT jlong JNICALL
-Java_com_brahmadeo_tunedllm_LlmManager_loadModel(JNIEnv* env, jobject thiz, jstring path, jint n_threads, jint n_ctx, jint n_batch) {
+extern "C" JNIEXPORT jlong JNICALL Java_com_brahmadeo_tunedllm_LlmManager_loadModel(JNIEnv* env, jobject thiz, jstring path, jint n_threads, jint n_ctx, jint n_batch) {
     std::lock_guard<std::mutex> lock(g_inference_mutex);
     const char* c_path = env->GetStringUTFChars(path, nullptr);
     std::string model_path(c_path);
     env->ReleaseStringUTFChars(path, c_path);
-
-    LOGI("Loading model: %s", model_path.c_str());
-
-    llama_model_params model_params = llama_model_default_params();
-    model_params.use_mmap = true;
-    model_params.use_mlock = false;
-
-    g_state.model = llama_model_load_from_file(model_path.c_str(), model_params);
-    if (!g_state.model) {
-        LOGE("Failed to load model");
-        return 0;
-    }
-
-    llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = n_ctx;
-    ctx_params.n_batch = n_batch;
-    ctx_params.n_threads = n_threads;
-    ctx_params.n_threads_batch = n_threads;
-
-    g_state.ctx = llama_init_from_model(g_state.model, ctx_params);
-    if (!g_state.ctx) {
-        LOGE("Failed to create context");
-        llama_model_free(g_state.model);
-        g_state.model = nullptr;
-        return 0;
-    }
-
+    llama_model_params mp = llama_model_default_params();
+    mp.use_mmap = true;
+    g_state.model = llama_model_load_from_file(model_path.c_str(), mp);
+    if (!g_state.model) return 0;
+    llama_context_params cp = llama_context_default_params();
+    cp.n_ctx = n_ctx; cp.n_batch = n_batch; cp.n_threads = n_threads; cp.n_threads_batch = n_threads;
+    g_state.ctx = llama_init_from_model(g_state.model, cp);
     g_state.previous_tokens.clear();
     return reinterpret_cast<jlong>(g_state.model);
 }
 
-extern "C"
-JNIEXPORT void JNICALL
-Java_com_brahmadeo_tunedllm_LlmManager_generate(JNIEnv* env, jobject thiz, jstring prompt, jobjectArray stop_strings_obj, jobject callback) {
+extern "C" JNIEXPORT void JNICALL Java_com_brahmadeo_tunedllm_LlmManager_generate(
+    JNIEnv* env, jobject thiz, jstring prompt, jobjectArray stop_strings_obj, 
+    jfloat temp, jfloat top_p, jint top_k, jfloat penalty, jobject callback) {
+    
     if (!g_state.ctx) return;
     g_state.stop_flag = true;
-
     const char* c_prompt = env->GetStringUTFChars(prompt, nullptr);
     std::string s_prompt(c_prompt);
     env->ReleaseStringUTFChars(prompt, c_prompt);
-
     std::vector<std::string> stop_strings;
     if (stop_strings_obj != nullptr) {
         int count = env->GetArrayLength(stop_strings_obj);
         for (int i = 0; i < count; i++) {
-            jstring stop_str_obj = (jstring)env->GetObjectArrayElement(stop_strings_obj, i);
-            const char* stop_str_chars = env->GetStringUTFChars(stop_str_obj, nullptr);
-            stop_strings.push_back(std::string(stop_str_chars));
-            env->ReleaseStringUTFChars(stop_str_obj, stop_str_chars);
-            env->DeleteLocalRef(stop_str_obj);
+            jstring s = (jstring)env->GetObjectArrayElement(stop_strings_obj, i);
+            const char* cs = env->GetStringUTFChars(s, nullptr);
+            stop_strings.push_back(std::string(cs));
+            env->ReleaseStringUTFChars(s, cs);
+            env->DeleteLocalRef(s);
         }
     }
-
     jobject callback_global = env->NewGlobalRef(callback);
-
-    LOGI("Starting inference thread");
-    std::thread([s_prompt, stop_strings, callback_global]() {
+    std::thread([s_prompt, stop_strings, temp, top_p, top_k, penalty, callback_global]() {
         std::lock_guard<std::mutex> lock(g_inference_mutex);
         g_state.stop_flag = false;
-        inference_thread(callback_global, s_prompt, stop_strings);
+        inference_thread(callback_global, s_prompt, stop_strings, temp, top_p, top_k, penalty);
     }).detach();
 }
 
-extern "C"
-JNIEXPORT void JNICALL
-Java_com_brahmadeo_tunedllm_LlmManager_stop(JNIEnv* env, jobject thiz) {
-    LOGI("Stop requested");
-    g_state.stop_flag = true;
+extern "C" JNIEXPORT void JNICALL Java_com_brahmadeo_tunedllm_LlmManager_stop(JNIEnv* env, jobject thiz) { g_state.stop_flag = true; }
+
+extern "C" JNIEXPORT void JNICALL Java_com_brahmadeo_tunedllm_LlmManager_clearContext(JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(g_inference_mutex);
+    LOGI("Forcing full KV cache reset");
+    g_state.previous_tokens.clear();
+    if (g_state.ctx) {
+        llama_memory_t mem = llama_get_memory(g_state.ctx);
+        if (mem) {
+            llama_memory_seq_rm(mem, -1, 0, -1);
+            llama_memory_clear(mem, true);
+        }
+    }
 }
 
-extern "C"
-JNIEXPORT void JNICALL
-Java_com_brahmadeo_tunedllm_LlmManager_unloadModel(JNIEnv* env, jobject thiz) {
+extern "C" JNIEXPORT void JNICALL Java_com_brahmadeo_tunedllm_LlmManager_unloadModel(JNIEnv* env, jobject thiz) {
     std::lock_guard<std::mutex> lock(g_inference_mutex);
-    LOGI("Unloading model");
-    if (g_state.ctx) {
-        llama_free(g_state.ctx);
-        g_state.ctx = nullptr;
-    }
-    if (g_state.model) {
-        llama_model_free(g_state.model);
-        g_state.model = nullptr;
-    }
+    if (g_state.ctx) { llama_free(g_state.ctx); g_state.ctx = nullptr; }
+    if (g_state.model) { llama_model_free(g_state.model); g_state.model = nullptr; }
     g_state.previous_tokens.clear();
 }

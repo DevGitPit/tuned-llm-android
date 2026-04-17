@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import dev.jeziellago.compose.markdowntext.MarkdownText
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.text.font.FontStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,6 +28,7 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
     var showTemplateDialog by remember { mutableStateOf(false) }
+    var showProfileMenu by remember { mutableStateOf(false) }
 
     val currentView = LocalView.current
     DisposableEffect(state.isGenerating) {
@@ -51,7 +53,6 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
         }
     }
 
-    // Improved auto-scrolling: only scroll if at bottom or when a new message starts
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content) {
         if (isAtBottom || state.isGenerating) {
             if (state.messages.isNotEmpty()) {
@@ -160,7 +161,7 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                 TopAppBar(
                     title = { 
                         val currentTitle = state.sessions.find { it.id == state.currentSessionId }?.title ?: "Tuned LLM Chat"
-                        Text(currentTitle) 
+                        Text(currentTitle, maxLines = 1) 
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -168,6 +169,36 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                         }
                     },
                     actions = {
+                        Box {
+                            IconButton(onClick = { showProfileMenu = true }) {
+                                val icon = when (state.config.mode) {
+                                    GenerationMode.GENERAL -> Icons.Default.Chat
+                                    GenerationMode.CODING -> Icons.Default.Code
+                                    GenerationMode.REASONING -> Icons.Default.AutoFixHigh
+                                }
+                                Icon(icon, contentDescription = "Profile")
+                            }
+                            DropdownMenu(
+                                expanded = showProfileMenu,
+                                onDismissRequest = { showProfileMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("General Profile") },
+                                    leadingIcon = { Icon(Icons.Default.Chat, null) },
+                                    onClick = { viewModel.updateGenerationMode(GenerationMode.GENERAL); showProfileMenu = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Coding Profile") },
+                                    leadingIcon = { Icon(Icons.Default.Code, null) },
+                                    onClick = { viewModel.updateGenerationMode(GenerationMode.CODING); showProfileMenu = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Reasoning Profile") },
+                                    leadingIcon = { Icon(Icons.Default.AutoFixHigh, null) },
+                                    onClick = { viewModel.updateGenerationMode(GenerationMode.REASONING); showProfileMenu = false }
+                                )
+                            }
+                        }
                         IconButton(onClick = { 
                             val chatText = state.messages.joinToString("\n\n") { 
                                 "${if (it.role == Role.USER) "USER" else "ASSISTANT"}: ${it.content}" 
@@ -201,6 +232,30 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                                 modifier = Modifier.padding(bottom = 8.dp)
                             )
                         }
+
+                        // Options Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = state.config.enableThinking,
+                                    onCheckedChange = { viewModel.toggleThinking(it) }
+                                )
+                                Text("Thinking Mode", style = MaterialTheme.typography.labelMedium)
+                            }
+                            
+                            if (state.isGenerating && state.currentTps != null) {
+                                Text(
+                                    text = "${"%.1f".format(state.currentTps)} t/s",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
@@ -210,34 +265,30 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                                 onValueChange = { inputText = it },
                                 modifier = Modifier.weight(1f),
                                 placeholder = { Text("Enter prompt...") },
-                                maxLines = 4
+                                maxLines = 4,
+                                shape = RoundedCornerShape(24.dp),
+                                colors = TextFieldDefaults.colors(
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                )
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                if (state.isGenerating && state.currentTps != null) {
-                                    Text(
-                                        text = "${"%.1f".format(state.currentTps)} t/s",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(bottom = 4.dp)
-                                    )
-                                }
-                                Button(
-                                    onClick = {
-                                        if (state.isGenerating) {
-                                            viewModel.stopGeneration()
-                                        } else {
-                                            if (inputText.isNotBlank()) {
-                                                viewModel.generate(inputText)
-                                                inputText = ""
-                                            }
+                            Button(
+                                onClick = {
+                                    if (state.isGenerating) {
+                                        viewModel.stopGeneration()
+                                    } else {
+                                        if (inputText.isNotBlank()) {
+                                            viewModel.generate(inputText)
+                                            inputText = ""
                                         }
-                                    },
-                                    enabled = state.isModelLoaded,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(if (state.isGenerating) "Stop" else "Send")
-                                }
+                                    }
+                                },
+                                enabled = state.isModelLoaded,
+                                shape = RoundedCornerShape(24.dp),
+                                contentPadding = PaddingValues(12.dp)
+                            ) {
+                                Icon(if (state.isGenerating) Icons.Default.Stop else Icons.Default.Send, null)
                             }
                         }
                     }
@@ -284,17 +335,16 @@ fun ChatMessageItem(message: ChatMessage, viewModel: LlmViewModel) {
             color = containerColor,
             contentColor = contentColor,
             shape = RoundedCornerShape(
-                topStart = 12.dp,
-                topEnd = 12.dp,
-                bottomStart = if (isUser) 12.dp else 0.dp,
-                bottomEnd = if (isUser) 0.dp else 12.dp
+                topStart = 16.dp,
+                topEnd = 16.dp,
+                bottomStart = if (isUser) 16.dp else 0.dp,
+                bottomEnd = if (isUser) 0.dp else 16.dp
             ),
             tonalElevation = 2.dp
         ) {
             Column {
                 MarkdownContent(message.content, contentColor, viewModel)
                 
-                // Message-level copy button at the bottom of the bubble
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
                     contentAlignment = Alignment.BottomEnd
@@ -317,26 +367,35 @@ fun ChatMessageItem(message: ChatMessage, viewModel: LlmViewModel) {
             text = if (isUser) "You" else "Assistant",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }
 }
 
 @Composable
 fun MarkdownContent(content: String, textColor: Color, viewModel: LlmViewModel) {
-    // Basic code block splitting logic
-    val parts = remember(content) {
-        val regex = Regex("```[a-zA-Z]*\\n?([\\s\\S]*?)```")
+    val state by viewModel.uiState.collectAsState()
+    val template = state.chatTemplate
+    
+    // Split by model-specific think tags
+    val thinkParts = remember(content, template) {
+        val startTag = template.thinkStartTag ?: "<think>"
+        val endTag = template.thinkEndTag ?: "</think>"
+        
+        // Escape for regex
+        val eStart = Regex.escape(startTag)
+        val eEnd = Regex.escape(endTag)
+        
+        val regex = Regex("($eStart[\\s\\S]*?$eEnd|$eStart[\\s\\S]*$)")
         val matches = regex.findAll(content)
-        val result = mutableListOf<Pair<String, Boolean>>() // text to isCodeBlock
+        val result = mutableListOf<Pair<String, Boolean>>() // text to isThinking
         
         var lastIndex = 0
         for (match in matches) {
             if (match.range.first > lastIndex) {
                 result.add(content.substring(lastIndex, match.range.first) to false)
             }
-            // Group 1 is the code content
-            result.add(match.groupValues[1] to true)
+            result.add(match.value to true)
             lastIndex = match.range.last + 1
         }
         if (lastIndex < content.length) {
@@ -349,44 +408,104 @@ fun MarkdownContent(content: String, textColor: Color, viewModel: LlmViewModel) 
     Column(modifier = Modifier.padding(12.dp)) {
         SelectionContainer {
             Column {
-                parts.forEach { (text, isCode) ->
-                    if (isCode) {
+                thinkParts.forEach { (partText, isThinking) ->
+                    if (isThinking) {
+                        // Styled thinking block
                         Surface(
-                            color = Color.Black.copy(alpha = 0.05f),
-                            shape = RoundedCornerShape(4.dp),
+                            color = textColor.copy(alpha = 0.05f),
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
                         ) {
-                            Column {
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    TextButton(
-                                        onClick = { viewModel.copyToClipboard(text) },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(24.dp)
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp))
+                            val cleanThink = partText
+                                .replace(template.thinkStartTag ?: "<think>", "")
+                                .replace(template.thinkEndTag ?: "</think>", "")
+                                .trim()
+                            
+                            if (cleanThink.isNotEmpty()) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(14.dp), tint = textColor.copy(alpha = 0.5f))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Copy", style = MaterialTheme.typography.labelSmall)
+                                        Text("Reasoning", style = MaterialTheme.typography.labelSmall, color = textColor.copy(alpha = 0.5f))
                                     }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = cleanThink,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = textColor.copy(alpha = 0.7f),
+                                            fontStyle = FontStyle.Italic
+                                        )
+                                    )
                                 }
-                                Text(
-                                    text = text.trim(),
-                                    style = MaterialTheme.typography.bodySmall.copy(color = textColor),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                )
                             }
                         }
-                    } else if (text.isNotBlank()) {
-                        MarkdownText(
-                            markdown = text,
-                            style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
-                            syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
-                        )
+                    } else {
+                        // Standard markdown part (handle code blocks within here)
+                        RenderStandardContent(partText, textColor, viewModel)
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun RenderStandardContent(content: String, textColor: Color, viewModel: LlmViewModel) {
+    val parts = remember(content) {
+        val regex = Regex("```[a-zA-Z]*\\n?([\\s\\S]*?)```")
+        val matches = regex.findAll(content)
+        val result = mutableListOf<Pair<String, Boolean>>() // text to isCodeBlock
+        
+        var lastIndex = 0
+        for (match in matches) {
+            if (match.range.first > lastIndex) {
+                result.add(content.substring(lastIndex, match.range.first) to false)
+            }
+            result.add(match.groupValues[1] to true)
+            lastIndex = match.range.last + 1
+        }
+        if (lastIndex < content.length) {
+            result.add(content.substring(lastIndex) to false)
+        }
+        if (result.isEmpty()) result.add(content to false)
+        result
+    }
+
+    parts.forEach { (text, isCode) ->
+        if (isCode) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
+            ) {
+                Column {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.CenterEnd
+                    ) {
+                        TextButton(
+                            onClick = { viewModel.copyToClipboard(text) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Copy", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Text(
+                        text = text.trim(),
+                        style = MaterialTheme.typography.bodySmall.copy(color = textColor),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        } else if (text.isNotBlank()) {
+            MarkdownText(
+                markdown = text,
+                style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
+                syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
+            )
         }
     }
 }

@@ -7,38 +7,54 @@ import android.os.IBinder
 import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class LlmViewModel(application: Application) : AndroidViewModel(application) {
+    private val prefs = application.getSharedPreferences("tuned_llm_prefs", Context.MODE_PRIVATE)
+    private val database = ChatDatabase.getDatabase(application)
+    private val chatDao = database.chatDao()
+
     private val _uiState = MutableStateFlow(ChatState())
     val uiState: StateFlow<ChatState> = _uiState.asStateFlow()
-
-    private val db = ChatDatabase.getDatabase(application)
-    private val chatDao = db.chatDao()
-    private val prefs = application.getSharedPreferences("tuned_llm_prefs", Context.MODE_PRIVATE)
 
     private val _ramInfo = MutableStateFlow<RamInfo?>(null)
     val ramInfo: StateFlow<RamInfo?> = _ramInfo.asStateFlow()
 
+    private var selectedUri: Uri? = null
     private val _selectedFileSize = MutableStateFlow<Long?>(null)
     val selectedFileSize: StateFlow<Long?> = _selectedFileSize.asStateFlow()
-
-    private var selectedUri: Uri? = null
 
     val isModelEverLoaded: Boolean
         get() = prefs.getBoolean("model_ever_loaded", false)
 
     private var llmService: LlmService? = null
     private var isBound = false
+    private var lastActiveSessionId: String? = null
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as LlmService.LlmBinder
+            llmService = binder.getService()
+            isBound = true
+            
+            // Auto-load if we have a saved path
+            val path = _uiState.value.lastModelPath
+            val name = _uiState.value.modelName
+            if (path != null && name != null && _uiState.value.isAutoLoading) {
+                loadModelFromPath(path, name)
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            llmService = null
+            isBound = false
+        }
+    }
 
     init {
         refreshRamInfo(application)
@@ -53,80 +69,17 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             chatDao.getAllSessionsWithMessages().collect { sessionsWithMessages ->
-                val sessions = sessionsWithMessages.map { swm ->
-                    ChatSession(
-                        id = swm.session.id,
-                        title = swm.session.title,
-                        messages = swm.messages
-                            .sortedBy { it.timestamp }
-                            .map { msg ->
-                                ChatMessage(
-                                    id = msg.id,
-                                    role = Role.valueOf(msg.role),
-                                    content = msg.content
-                                )
-                            }
-                    )
-                }
-                
+                val sessions = sessionsWithMessages.map { it.toChatSession() }
                 _uiState.update { state ->
-                    val mergedSessions = if (state.isGenerating && state.currentSessionId != null) {
-                        sessions.map { session ->
-                            if (session.id == state.currentSessionId) {
-                                val currentAssistantMsg = state.messages.lastOrNull { it.role == Role.ASSISTANT }
-                                if (currentAssistantMsg != null && session.messages.none { it.id == currentAssistantMsg.id }) {
-                                    session.copy(messages = session.messages + currentAssistantMsg)
-                                } else {
-                                    session
-                                }
-                            } else {
-                                session
-                            }
-                        }
-                    } else {
-                        sessions
-                    }
-                    state.copy(sessions = mergedSessions)
-                }
-                
-                // If no current session selected, pick the first one from DB or create new
-                if (_uiState.value.currentSessionId == null) {
-                    if (sessions.isNotEmpty()) {
-                        _uiState.update { it.copy(currentSessionId = sessions.first().id) }
-                    } else {
-                        createNewSession()
-                    }
+                    val currentId = state.currentSessionId ?: sessions.lastOrNull()?.id
+                    state.copy(sessions = sessions, currentSessionId = currentId)
                 }
             }
         }
-    }
 
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val binder = service as LlmService.LlmBinder
-            llmService = binder.getService()
-            isBound = true
-
-            // Try auto-loading last model if not loaded
-            val savedPath = prefs.getString("last_model_path", null)
-            val savedName = prefs.getString("last_model_name", "Model")
-            if (savedPath != null && !_uiState.value.isModelLoaded) {
-                loadModelFromPath(savedPath, savedName ?: "Model")
-            } else {
-                _uiState.update { it.copy(isAutoLoading = false) }
-            }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            isBound = false
-            llmService = null
-        }
-    }
-
-    fun startAndBindService() {
-        val intent = Intent(getApplication(), LlmService::class.java)
-        ContextCompat.startForegroundService(getApplication(), intent)
-        getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_IMPORTANT)
+        val intent = Intent(application, LlmService::class.java)
+        application.startService(intent)
+        application.bindService(intent, serviceConnection, Context.BIND_IMPORTANT)
     }
 
     private fun ensureSession() {
@@ -136,20 +89,23 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createNewSession() {
-        val newId = UUID.randomUUID().toString()
-        _uiState.update { it.copy(currentSessionId = newId) }
         viewModelScope.launch {
+            llmService?.llmManager?.clearContext()
+            val newId = UUID.randomUUID().toString()
+            _uiState.update { it.copy(currentSessionId = newId) }
             chatDao.insertSession(SessionEntity(newId, "New Chat"))
         }
     }
 
     fun selectSession(sessionId: String) {
         if (_uiState.value.currentSessionId == sessionId) return
-        _uiState.update { it.copy(currentSessionId = sessionId) }
+        viewModelScope.launch {
+            llmService?.llmManager?.clearContext()
+            _uiState.update { it.copy(currentSessionId = sessionId) }
+        }
     }
 
     fun deleteSession(sessionId: String) {
-        val currentId = _uiState.value.currentSessionId
         _uiState.update { state ->
             val updatedSessions = state.sessions.filter { it.id != sessionId }
             var nextSessionId = state.currentSessionId
@@ -165,6 +121,29 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateChatTemplate(template: ChatTemplate) {
         _uiState.update { it.copy(chatTemplate = template) }
+    }
+
+    fun updateGenerationMode(mode: GenerationMode) {
+        val isGemma4 = _uiState.value.chatTemplate == ChatTemplate.GEMMA4
+        val newConfig = when (mode) {
+            GenerationMode.GENERAL -> {
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 0.7f, topP = 0.8f, topK = 20, presencePenalty = 1.5f)
+            }
+            GenerationMode.CODING -> {
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 0.6f, topP = 0.95f, topK = 20, presencePenalty = 0.0f)
+            }
+            GenerationMode.REASONING -> {
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 40, presencePenalty = 1.5f)
+            }
+        }
+        _uiState.update { it.copy(config = newConfig) }
+    }
+
+    fun toggleThinking(enabled: Boolean) {
+        _uiState.update { it.copy(config = it.config.copy(enableThinking = enabled)) }
     }
 
     fun loadSelectedModel(uri: Uri) {
@@ -264,19 +243,48 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         ensureSession()
         val currentSessionId = _uiState.value.currentSessionId ?: return
 
+        // If we switched sessions, force a clear
+        if (lastActiveSessionId != null && lastActiveSessionId != currentSessionId) {
+            llmService?.llmManager?.clearContext()
+        }
+        lastActiveSessionId = currentSessionId
+
         val userMsgId = UUID.randomUUID().toString()
         val assistantMsgId = UUID.randomUUID().toString()
 
         val userMsg = ChatMessage(userMsgId, Role.USER, prompt)
         
-        // Clean current messages of any leaked tokens just in case
-        val sanitizedMessages = _uiState.value.messages.map { 
-            it.copy(content = it.content
+        val template = _uiState.value.chatTemplate
+        val config = _uiState.value.config
+
+        // Clean and potentially PRUNE thinking tags from history
+        val sanitizedMessages = _uiState.value.messages.map { msg ->
+            var content = msg.content
                 .replace("<end_of_turn>", "")
                 .replace("<start_of_turn>", "")
                 .replace("</start_of_turn>", "")
                 .replace("<eos>", "")
-                .trim())
+                .replace("<|im_start|>", "")
+                .replace("<|im_end|>", "")
+                .replace("<|endoftext|>", "")
+                .replace("<|eot_id|>", "")
+                .replace("<|start_header_id|>", "")
+                .replace("<|end_header_id|>", "")
+                .trim()
+            
+            // SMART PRUNING: Only for history
+            if (msg.role == Role.ASSISTANT && template.shouldPruneThinkingFromHistory) {
+                if (template.thinkStartTag != null && template.thinkEndTag != null) {
+                    val sIdx = content.indexOf(template.thinkStartTag)
+                    val eIdx = content.indexOf(template.thinkEndTag)
+                    if (sIdx != -1 && eIdx != -1 && eIdx > sIdx) {
+                        val before = content.substring(0, sIdx)
+                        val after = content.substring(eIdx + template.thinkEndTag.length)
+                        content = (before + after).trim()
+                    }
+                }
+            }
+            msg.copy(content = content)
         }
 
         val history = sanitizedMessages + userMsg
@@ -304,21 +312,37 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             chatDao.insertMessage(MessageEntity(userMsgId, currentSessionId, Role.USER.name, prompt))
-            // Re-read current title after update above
             val currentTitle = _uiState.value.sessions.find { it.id == currentSessionId }?.title
             if (currentTitle != null) {
                 chatDao.updateSession(SessionEntity(currentSessionId, currentTitle))
             }
         }
 
-        // Build the chat template with full history
-        val template = _uiState.value.chatTemplate
         val promptBuilder = StringBuilder()
+        
+        // Handle GEMMA4 special thinking trigger in system prompt
+        if (config.enableThinking && template == ChatTemplate.GEMMA4) {
+            promptBuilder.append("<|turn>system\n<|think|>You are a helpful assistant with reasoning capabilities.<turn|>\n")
+        }
+
         for (msg in history) {
             val roleTag = if (msg.role == Role.USER) template.userRole else template.assistantRole
-            promptBuilder.append("${template.prefix}$roleTag${template.roleSuffix}${msg.content.trim()}${template.eot}")
+            promptBuilder.append("${template.prefix}$roleTag${template.roleSuffix}${msg.content}${template.eot}")
         }
         promptBuilder.append("${template.prefix}${template.assistantRole}${template.roleSuffix}")
+        
+        // Pre-inject thinking tag if enabled to force the model to start reasoning
+        if (config.enableThinking && template.thinkStartTag != null) {
+            if (_uiState.value.modelName?.contains("qwen", true) == true || 
+                _uiState.value.modelName?.contains("gemma-4", true) == true ||
+                _uiState.value.modelName?.contains("gemma4", true) == true) {
+                promptBuilder.append(template.thinkStartTag)
+                // Gemma 4 specific suffix for thought channel
+                if (template == ChatTemplate.GEMMA4) {
+                    promptBuilder.append("\n")
+                }
+            }
+        }
         
         val formattedPrompt = promptBuilder.toString()
         Log.d("LlmViewModel", "Sending prompt to JNI: $formattedPrompt")
@@ -327,54 +351,58 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         var startTime = 0L
 
         viewModelScope.launch(Dispatchers.IO) {
-            llmService?.llmManager?.generate(formattedPrompt, template.stopStrings.toTypedArray(), object : LlmCallback {
-                override fun onToken(token: String) {
-                    if (startTime == 0L) startTime = System.currentTimeMillis()
-                    tokenCount++
-                    
-                    val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000f
-                    val tps = if (elapsedSeconds > 0) tokenCount / elapsedSeconds else 0f
+            llmService?.llmManager?.generate(
+                formattedPrompt, 
+                template.stopStrings.toTypedArray(),
+                config.temperature,
+                config.topP,
+                config.topK,
+                config.presencePenalty,
+                object : LlmCallback {
+                    override fun onToken(token: String) {
+                        if (startTime == 0L) startTime = System.currentTimeMillis()
+                        tokenCount++
+                        val elapsed = (System.currentTimeMillis() - startTime) / 1000f
+                        val tps = if (elapsed > 0) tokenCount / elapsed else 0f
 
-                    _uiState.update { state ->
-                        val updatedSessions = state.sessions.map { session ->
-                            if (session.id == currentSessionId) {
-                                val lastMsg = session.messages.lastOrNull()
-                                if (lastMsg?.id == assistantMsgId) {
-                                    val updatedMessages = session.messages.dropLast(1) + lastMsg.copy(content = lastMsg.content + token)
-                                    session.copy(messages = updatedMessages)
-                                } else {
-                                    session
-                                }
-                            } else {
-                                session
+                        _uiState.update { state ->
+                            val updatedSessions = state.sessions.map { session ->
+                                if (session.id == currentSessionId) {
+                                    val lastMsg = session.messages.lastOrNull()
+                                    if (lastMsg?.id == assistantMsgId) {
+                                        session.copy(messages = session.messages.dropLast(1) + lastMsg.copy(content = lastMsg.content + token))
+                                    } else session
+                                } else session
                             }
+                            state.copy(sessions = updatedSessions, currentTps = tps, isGenerating = true)
                         }
-                        state.copy(sessions = updatedSessions, currentTps = tps)
                     }
-                }
 
-                override fun onComplete() {
-                    val finalMsg = _uiState.value.messages.lastOrNull { it.id == assistantMsgId }
-                    if (finalMsg != null) {
-                        viewModelScope.launch {
-                            chatDao.insertMessage(MessageEntity(assistantMsgId, currentSessionId, Role.ASSISTANT.name, finalMsg.content))
+                    override fun onComplete() {
+                        val finalMsg = _uiState.value.sessions.find { it.id == currentSessionId }?.messages?.lastOrNull { it.id == assistantMsgId }
+                        if (finalMsg != null) {
+                            viewModelScope.launch {
+                                chatDao.insertMessage(MessageEntity(assistantMsgId, currentSessionId, Role.ASSISTANT.name, finalMsg.content))
+                                _uiState.update { it.copy(isGenerating = false, currentTps = null) }
+                            }
+                        } else {
                             _uiState.update { it.copy(isGenerating = false, currentTps = null) }
                         }
-                    } else {
-                        _uiState.update { it.copy(isGenerating = false, currentTps = null) }
+                    }
+
+                    override fun onError(message: String) {
+                        Log.e("LlmViewModel", "Generation error: $message")
+                        val isStopped = message.contains("stopped", true)
+                        _uiState.update { state -> state.copy(isGenerating = false, error = if (isStopped) null else message, currentTps = null) }
                     }
                 }
-
-                override fun onError(message: String) {
-                    _uiState.update { it.copy(isGenerating = false, error = message, currentTps = null) }
-                }
-            })
+            )
         }
     }
 
     fun stopGeneration() {
         llmService?.llmManager?.stop()
-        _uiState.update { it.copy(isGenerating = false) }
+        _uiState.update { it.copy(isGenerating = false, currentTps = null) }
     }
 
     override fun onCleared() {

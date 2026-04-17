@@ -16,6 +16,19 @@ data class ChatSession(
     val messages: List<ChatMessage> = emptyList()
 )
 
+data class GenerationConfig(
+    val temperature: Float = 0.7f,
+    val topP: Float = 0.8f,
+    val topK: Int = 20,
+    val presencePenalty: Float = 1.5f,
+    val enableThinking: Boolean = true,
+    val mode: GenerationMode = GenerationMode.GENERAL
+)
+
+enum class GenerationMode {
+    GENERAL, CODING, REASONING
+}
+
 data class ChatTemplate(
     val prefix: String,
     val roleSuffix: String,
@@ -23,7 +36,9 @@ data class ChatTemplate(
     val stopStrings: List<String>,
     val userRole: String,
     val assistantRole: String,
-    val systemRole: String = "system"
+    val thinkStartTag: String? = null,
+    val thinkEndTag: String? = null,
+    val shouldPruneThinkingFromHistory: Boolean = false
 ) {
     companion object {
         val GEMMA = ChatTemplate(
@@ -39,9 +54,24 @@ data class ChatTemplate(
             prefix = "<|im_start|>",
             roleSuffix = "\n",
             eot = "<|im_end|>\n",
-            stopStrings = listOf("<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>"),
+            stopStrings = listOf("<|im_end|>", "<|endoftext|>", "<|im_start|>"),
             userRole = "user",
-            assistantRole = "assistant"
+            assistantRole = "assistant",
+            thinkStartTag = "<think>",
+            thinkEndTag = "</think>",
+            shouldPruneThinkingFromHistory = true
+        )
+
+        val GEMMA4 = ChatTemplate(
+            prefix = "<|turn>",
+            roleSuffix = "\n",
+            eot = "<turn|>\n",
+            stopStrings = listOf("<turn|>", "<eos>", "</s>"),
+            userRole = "user",
+            assistantRole = "model",
+            thinkStartTag = "<|channel>thought",
+            thinkEndTag = "<channel|>",
+            shouldPruneThinkingFromHistory = true
         )
 
         val LLAMA3 = ChatTemplate(
@@ -57,6 +87,7 @@ data class ChatTemplate(
             val n = name?.lowercase() ?: ""
             return when {
                 n.contains("qwen") -> QWEN
+                n.contains("gemma-4") || n.contains("gemma4") -> GEMMA4
                 n.contains("llama-3") || n.contains("llama3") -> LLAMA3
                 else -> GEMMA
             }
@@ -76,6 +107,7 @@ data class ChatState(
     val isCopying: Boolean = false,
     val copyProgress: Float = 0f,
     val chatTemplate: ChatTemplate = ChatTemplate.GEMMA,
+    val config: GenerationConfig = GenerationConfig(),
     val error: String? = null
 ) {
     val messages: List<ChatMessage>

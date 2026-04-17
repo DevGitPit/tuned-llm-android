@@ -26,8 +26,17 @@ class LlmManager(private val context: Context) {
     }
 
     external fun loadModel(path: String, nThreads: Int, nCtx: Int, nBatch: Int): Long
-    external fun generate(prompt: String, stopStrings: Array<String>, callback: LlmCallback)
+    external fun generate(
+        prompt: String, 
+        stopStrings: Array<String>, 
+        temperature: Float,
+        topP: Float,
+        topK: Int,
+        presencePenalty: Float,
+        callback: LlmCallback
+    )
     external fun stop()
+    external fun clearContext()
     external fun unloadModel()
 
     suspend fun copyModelToInternalStorage(uri: Uri, onProgress: (Float) -> Unit): String? = withContext(Dispatchers.IO) {
@@ -64,7 +73,7 @@ class LlmManager(private val context: Context) {
         }
     }
 
-    fun loadModelFromPath(path: String, nThreads: Int = 4, nCtx: Int = 2048, nBatch: Int = 256): Result<Long> {
+    fun loadModelFromPath(path: String, nThreads: Int = 4, nCtx: Int = 8192, nBatch: Int = 512): Result<Long> {
         return try {
             nativePtr = loadModel(path, nThreads, nCtx, nBatch)
             if (nativePtr != 0L) {

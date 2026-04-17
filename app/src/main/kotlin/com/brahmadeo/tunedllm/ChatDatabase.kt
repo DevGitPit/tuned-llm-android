@@ -62,6 +62,22 @@ interface ChatDao {
     suspend fun deleteMessagesBySession(sessionId: String)
 }
 
+fun MessageEntity.toChatMessage(): ChatMessage {
+    return ChatMessage(
+        id = id,
+        role = Role.valueOf(role),
+        content = content
+    )
+}
+
+fun SessionWithMessages.toChatSession(): ChatSession {
+    return ChatSession(
+        id = session.id,
+        title = session.title,
+        messages = messages.sortedBy { it.timestamp }.map { it.toChatMessage() }
+    )
+}
+
 @Database(entities = [SessionEntity::class, MessageEntity::class], version = 1)
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
