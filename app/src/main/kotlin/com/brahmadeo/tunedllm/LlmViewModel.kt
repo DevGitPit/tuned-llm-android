@@ -47,6 +47,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(
             lastModelPath = savedModelPath,
             modelName = savedModelName,
+            chatTemplate = ChatTemplate.fromModelName(savedModelName),
             isAutoLoading = savedModelPath != null
         ) }
 
@@ -162,7 +163,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateChatTemplate(template: String) {
+    fun updateChatTemplate(template: ChatTemplate) {
         _uiState.update { it.copy(chatTemplate = template) }
     }
 
@@ -211,6 +212,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                     isModelLoaded = true, 
                     lastModelPath = path, 
                     modelName = modelName,
+                    chatTemplate = ChatTemplate.fromModelName(modelName),
                     isAutoLoading = false,
                     error = null
                 ) }
@@ -309,13 +311,14 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Build the Gemma chat template with full history
+        // Build the chat template with full history
+        val template = _uiState.value.chatTemplate
         val promptBuilder = StringBuilder()
         for (msg in history) {
-            val roleTag = if (msg.role == Role.USER) "user" else "model"
-            promptBuilder.append("<start_of_turn>$roleTag\n${msg.content.trim()}<end_of_turn>\n")
+            val roleTag = if (msg.role == Role.USER) template.userRole else template.assistantRole
+            promptBuilder.append("${template.prefix}$roleTag${template.roleSuffix}${msg.content.trim()}${template.eot}")
         }
-        promptBuilder.append("<start_of_turn>model\n")
+        promptBuilder.append("${template.prefix}${template.assistantRole}${template.roleSuffix}")
         
         val formattedPrompt = promptBuilder.toString()
         Log.d("LlmViewModel", "Sending prompt to JNI: $formattedPrompt")
@@ -324,7 +327,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         var startTime = 0L
 
         viewModelScope.launch(Dispatchers.IO) {
-            llmService?.llmManager?.generate(formattedPrompt, object : LlmCallback {
+            llmService?.llmManager?.generate(formattedPrompt, template.stopStrings.toTypedArray(), object : LlmCallback {
                 override fun onToken(token: String) {
                     if (startTime == 0L) startTime = System.currentTimeMillis()
                     tokenCount++

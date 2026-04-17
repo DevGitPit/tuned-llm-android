@@ -75,7 +75,7 @@ Java_com_brahmadeo_tunedllm_LlmManager_loadModel(JNIEnv* env, jobject thiz, jstr
     return reinterpret_cast<jlong>(g_state.model);
 }
 
-static void inference_thread(jobject callback_global, std::string prompt_str) {
+static void inference_thread(jobject callback_global, std::string prompt_str, std::vector<std::string> stop_strings) {
     JNIEnv* env;
     if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
         LOGE("Failed to attach current thread");
@@ -178,28 +178,16 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
                 piece = std::string(buf, n_piece);
             }
 
-            // Fallback string-based stop check for Gemma special tokens
-            // Many models use variations of these with different IDs
-            if (piece.find("<end_of_turn>") != std::string::npos || 
-                piece.find("<eos>") != std::string::npos || 
-                piece.find("</s>") != std::string::npos ||
-                piece.find("<start_of_turn>") != std::string::npos ||
-                piece.find("</start_of_turn>") != std::string::npos) {
-                LOGI("String-based EOG detected: %s", piece.c_str());
-                break;
-            }
-
-            // Filter out any turn tags if they somehow leaked past the stop check
-            auto filter_tags = [&](std::string& s, const std::string& tag) {
-                size_t pos = std::string::npos;
-                while ((pos = s.find(tag)) != std::string::npos) {
-                    s.erase(pos, tag.length());
+            // Stop string check
+            bool stop_found = false;
+            for (const auto& stop_str : stop_strings) {
+                if (piece.find(stop_str) != std::string::npos) {
+                    LOGI("Stop string detected: %s", piece.c_str());
+                    stop_found = true;
+                    break;
                 }
-            };
-            
-            filter_tags(piece, "<start_of_turn>");
-            filter_tags(piece, "</start_of_turn>");
-            filter_tags(piece, "<end_of_turn>");
+            }
+            if (stop_found) break;
 
             if (!piece.empty()) {
                 // JNI Callback
@@ -242,17 +230,29 @@ static void inference_thread(jobject callback_global, std::string prompt_str) {
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_brahmadeo_tunedllm_LlmManager_generate(JNIEnv* env, jobject thiz, jstring prompt, jobject callback) {
+Java_com_brahmadeo_tunedllm_LlmManager_generate(JNIEnv* env, jobject thiz, jstring prompt, jobjectArray stop_strings_obj, jobject callback) {
     if (!g_state.ctx) return;
 
     const char* c_prompt = env->GetStringUTFChars(prompt, nullptr);
     std::string s_prompt(c_prompt);
     env->ReleaseStringUTFChars(prompt, c_prompt);
 
+    std::vector<std::string> stop_strings;
+    if (stop_strings_obj != nullptr) {
+        int count = env->GetArrayLength(stop_strings_obj);
+        for (int i = 0; i < count; i++) {
+            jstring stop_str_obj = (jstring)env->GetObjectArrayElement(stop_strings_obj, i);
+            const char* stop_str_chars = env->GetStringUTFChars(stop_str_obj, nullptr);
+            stop_strings.push_back(std::string(stop_str_chars));
+            env->ReleaseStringUTFChars(stop_str_obj, stop_str_chars);
+            env->DeleteLocalRef(stop_str_obj);
+        }
+    }
+
     jobject callback_global = env->NewGlobalRef(callback);
     g_state.stop_flag = false;
 
-    std::thread(inference_thread, callback_global, s_prompt).detach();
+    std::thread(inference_thread, callback_global, s_prompt, stop_strings).detach();
 }
 
 extern "C"

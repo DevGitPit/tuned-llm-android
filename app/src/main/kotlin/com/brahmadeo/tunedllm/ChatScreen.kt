@@ -61,33 +61,22 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
     }
 
     if (showTemplateDialog) {
-        var templateText by remember { mutableStateOf(state.chatTemplate) }
         AlertDialog(
             onDismissRequest = { showTemplateDialog = false },
-            title = { Text("Edit Chat Template") },
+            title = { Text("Chat Template Info") },
             text = {
                 Column {
-                    Text("Use {{prompt}} as placeholder for user message.", style = MaterialTheme.typography.bodySmall)
+                    Text("Current model: ${state.modelName ?: "Default"}")
                     Spacer(modifier = Modifier.height(8.dp))
-                    TextField(
-                        value = templateText,
-                        onValueChange = { templateText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 10
-                    )
+                    Text("User Role: ${state.chatTemplate.userRole}")
+                    Text("Assistant Role: ${state.chatTemplate.assistantRole}")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Stop Tokens: ${state.chatTemplate.stopStrings.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.updateChatTemplate(templateText)
-                    showTemplateDialog = false
-                }) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
                 TextButton(onClick = { showTemplateDialog = false }) {
-                    Text("Cancel")
+                    Text("Close")
                 }
             }
         )

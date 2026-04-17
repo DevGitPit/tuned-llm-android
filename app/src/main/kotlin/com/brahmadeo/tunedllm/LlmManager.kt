@@ -26,7 +26,7 @@ class LlmManager(private val context: Context) {
     }
 
     external fun loadModel(path: String, nThreads: Int, nCtx: Int, nBatch: Int): Long
-    external fun generate(prompt: String, callback: LlmCallback)
+    external fun generate(prompt: String, stopStrings: Array<String>, callback: LlmCallback)
     external fun stop()
     external fun unloadModel()
 
