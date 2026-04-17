@@ -6,6 +6,12 @@
 #include <android/log.h>
 #include "llama.h"
 
+#ifdef GGML_USE_OPENBLAS
+extern "C" {
+    void openblas_set_num_threads(int num_threads);
+}
+#endif
+
 #define TAG "LLM_JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -21,6 +27,12 @@ static JavaVM* g_vm = nullptr;
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_vm = vm;
+    
+#ifdef GGML_USE_OPENBLAS
+    LOGI("Setting OpenBLAS threads to 1 for better stability");
+    openblas_set_num_threads(1);
+#endif
+
     return JNI_VERSION_1_6;
 }
 
@@ -115,11 +127,11 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
 
         llama_memory_t mem = llama_get_memory(g_state.ctx);
         if (n_past < g_state.previous_tokens.size()) {
-            LOGI("Partial cache hit: n_past = %zu. Clearing %zu stale tokens.", n_past, g_state.previous_tokens.size() - n_past);
+            LOGI("Partial cache hit: n_past = %zu. Clearing stale tokens.", n_past);
             if (n_past == 0) {
                 if (mem) llama_memory_clear(mem, true);
             } else {
-                if (mem) llama_memory_seq_rm(mem, 0, (llama_pos)n_past, -1);
+                if (mem) llama_memory_seq_rm(mem, -1, (llama_pos)n_past, -1);
             }
         } else {
             LOGI("Cache hit: n_past = %zu. No clearing needed.", n_past);
@@ -129,8 +141,12 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
         std::vector<llama_token> session_tokens = prompt_tokens;
 
         // Prompt Processing (KV Cache Fill)
+        bool prompt_interrupted = false;
         for (size_t i = n_past; i < prompt_tokens.size(); i += n_batch) {
-            if (g_state.stop_flag.load()) break;
+            if (g_state.stop_flag.load()) {
+                prompt_interrupted = true;
+                break;
+            }
 
             int n_eval = (int)std::min((size_t)n_batch, prompt_tokens.size() - i);
             batch.n_tokens = 0;
@@ -146,6 +162,13 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
             }
         }
         
+        if (prompt_interrupted) {
+            // If we stopped mid-prompt, the cache is in an inconsistent state for the next run
+            g_state.previous_tokens.clear();
+            if (mem) llama_memory_clear(mem, true);
+            throw std::runtime_error("Generation stopped");
+        }
+
         n_past = prompt_tokens.size();
 
         // Generation Loop
