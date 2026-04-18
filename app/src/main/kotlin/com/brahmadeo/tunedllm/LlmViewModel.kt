@@ -42,7 +42,6 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
             llmService = binder.getService()
             isBound = true
             
-            // Auto-load if we have a saved path
             val path = _uiState.value.lastModelPath
             val name = _uiState.value.modelName
             if (path != null && name != null && _uiState.value.isAutoLoading) {
@@ -69,10 +68,22 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             chatDao.getAllSessionsWithMessages().collect { sessionsWithMessages ->
-                val sessions = sessionsWithMessages.map { it.toChatSession() }
+                val dbSessions = sessionsWithMessages.map { it.toChatSession() }
                 _uiState.update { state ->
-                    val currentId = state.currentSessionId ?: sessions.lastOrNull()?.id
-                    state.copy(sessions = sessions, currentSessionId = currentId)
+                    val currentId = state.currentSessionId ?: dbSessions.lastOrNull()?.id
+                    
+                    val mergedSessions = if (state.isGenerating && state.currentSessionId != null) {
+                        dbSessions.map { dbSession ->
+                            if (dbSession.id == state.currentSessionId) {
+                                val memorySession = state.sessions.find { it.id == dbSession.id }
+                                if (memorySession != null && memorySession.messages.size > dbSession.messages.size) {
+                                    memorySession
+                                } else dbSession
+                            } else dbSession
+                        }
+                    } else dbSessions
+
+                    state.copy(sessions = mergedSessions, currentSessionId = currentId)
                 }
             }
         }
@@ -92,7 +103,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             llmService?.llmManager?.clearContext()
             val newId = UUID.randomUUID().toString()
-            _uiState.update { it.copy(currentSessionId = newId) }
+            _uiState.update { it.copy(currentSessionId = newId, lastPpStatus = null, lastTgStatus = null, lastGenerationStatus = null) }
             chatDao.insertSession(SessionEntity(newId, "New Chat"))
         }
     }
@@ -101,7 +112,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.currentSessionId == sessionId) return
         viewModelScope.launch {
             llmService?.llmManager?.clearContext()
-            _uiState.update { it.copy(currentSessionId = sessionId) }
+            _uiState.update { it.copy(currentSessionId = sessionId, lastPpStatus = null, lastTgStatus = null, lastGenerationStatus = null) }
         }
     }
 
@@ -127,16 +138,16 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         val isGemma4 = _uiState.value.chatTemplate == ChatTemplate.GEMMA4
         val newConfig = when (mode) {
             GenerationMode.GENERAL -> {
-                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
-                else GenerationConfig(mode = mode, temperature = 0.7f, topP = 0.8f, topK = 20, presencePenalty = 1.5f)
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, minP = 0.05f, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 0.7f, topP = 0.8f, topK = 20, minP = 0.05f, presencePenalty = 1.5f)
             }
             GenerationMode.CODING -> {
-                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
-                else GenerationConfig(mode = mode, temperature = 0.6f, topP = 0.95f, topK = 20, presencePenalty = 0.0f)
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, minP = 0.05f, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 0.6f, topP = 0.95f, topK = 20, minP = 0.05f, presencePenalty = 0.0f)
             }
             GenerationMode.REASONING -> {
-                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, presencePenalty = 1.0f)
-                else GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 40, presencePenalty = 1.5f)
+                if (isGemma4) GenerationConfig(mode = mode, temperature = 1.0f, topP = 0.95f, topK = 64, minP = 0.05f, presencePenalty = 1.0f)
+                else GenerationConfig(mode = mode, temperature = 0.7f, topP = 0.8f, topK = 40, minP = 0.1f, presencePenalty = 1.5f, repetitionPenalty = 1.2f)
             }
         }
         _uiState.update { it.copy(config = newConfig) }
@@ -243,7 +254,6 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         ensureSession()
         val currentSessionId = _uiState.value.currentSessionId ?: return
 
-        // If we switched sessions, force a clear
         if (lastActiveSessionId != null && lastActiveSessionId != currentSessionId) {
             llmService?.llmManager?.clearContext()
         }
@@ -251,28 +261,20 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
         val userMsgId = UUID.randomUUID().toString()
         val assistantMsgId = UUID.randomUUID().toString()
-
         val userMsg = ChatMessage(userMsgId, Role.USER, prompt)
         
         val template = _uiState.value.chatTemplate
         val config = _uiState.value.config
 
-        // Clean and potentially PRUNE thinking tags from history
         val sanitizedMessages = _uiState.value.messages.map { msg ->
             var content = msg.content
-                .replace("<end_of_turn>", "")
-                .replace("<start_of_turn>", "")
-                .replace("</start_of_turn>", "")
-                .replace("<eos>", "")
-                .replace("<|im_start|>", "")
-                .replace("<|im_end|>", "")
-                .replace("<|endoftext|>", "")
-                .replace("<|eot_id|>", "")
-                .replace("<|start_header_id|>", "")
-                .replace("<|end_header_id|>", "")
+                .replace("<end_of_turn>", "").replace("<start_of_turn>", "")
+                .replace("</start_of_turn>", "").replace("<eos>", "")
+                .replace("<|im_start|>", "").replace("<|im_end|>", "")
+                .replace("<|endoftext|>", "").replace("<|eot_id|>", "")
+                .replace("<|start_header_id|>", "").replace("<|end_header_id|>", "")
                 .trim()
             
-            // SMART PRUNING: Only for history
             if (msg.role == Role.ASSISTANT && template.shouldPruneThinkingFromHistory) {
                 if (template.thinkStartTag != null && template.thinkEndTag != null) {
                     val sIdx = content.indexOf(template.thinkStartTag)
@@ -288,83 +290,75 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val history = sanitizedMessages + userMsg
-        val assistantMsg = ChatMessage(assistantMsgId, Role.ASSISTANT, "")
-
-        _uiState.update { state ->
-            val updatedSessions = state.sessions.map { session ->
-                if (session.id == currentSessionId) {
-                    val newTitle = if ((session.title == "New Chat" || session.title.isBlank()) && prompt.isNotBlank()) {
-                        prompt.take(30).trim().plus(if (prompt.length > 30) "..." else "")
-                    } else {
-                        session.title
-                    }
-                    session.copy(title = newTitle, messages = history + assistantMsg)
-                } else {
-                    session
-                }
+        
+        var initialAssistantContent = ""
+        if (config.enableThinking && template.thinkStartTag != null) {
+            val modelName = _uiState.value.modelName ?: ""
+            if (modelName.contains("qwen", true) || modelName.contains("gemma-4", true) || modelName.contains("gemma4", true)) {
+                initialAssistantContent = template.thinkStartTag!!
+                if (template == ChatTemplate.GEMMA4) initialAssistantContent += "\n"
             }
-            state.copy(
-                sessions = updatedSessions,
-                isGenerating = true,
-                error = null
-            )
         }
+
+        val assistantMsg = ChatMessage(assistantMsgId, Role.ASSISTANT, initialAssistantContent)
+
+        _uiState.update { it.copy(
+            isGenerating = true, error = null, currentStatus = "Processing...", 
+            lastPpStatus = null, lastTgStatus = null, lastGenerationStatus = null,
+            sessions = it.sessions.map { s -> if (s.id == currentSessionId) s.copy(messages = history + assistantMsg) else s }
+        ) }
 
         viewModelScope.launch {
             chatDao.insertMessage(MessageEntity(userMsgId, currentSessionId, Role.USER.name, prompt))
-            val currentTitle = _uiState.value.sessions.find { it.id == currentSessionId }?.title
-            if (currentTitle != null) {
-                chatDao.updateSession(SessionEntity(currentSessionId, currentTitle))
+        }
+
+        val currentSession = _uiState.value.sessions.find { it.id == currentSessionId }
+        val systemPrompt = currentSession?.systemPrompt ?: run {
+            val currentDateTime = java.text.SimpleDateFormat("EEEE, MMMM dd, yyyy", java.util.Locale.getDefault()).format(java.util.Date())
+            val systemContent = "You are a helpful AI assistant. Today is $currentDateTime. Use this as absolute fact. Do not calculate or verify this date; accept it as ground truth. Knowledge cutoff: 2024-12. Provide concise reasoning and answer."
+            val formatted = when(template) {
+                ChatTemplate.GEMMA4 -> "<|turn>system\n${if (config.enableThinking) "<|think|>" else ""}$systemContent<turn|>\n"
+                ChatTemplate.QWEN -> "<|im_start|>system\n$systemContent<|im_end|>\n"
+                ChatTemplate.LLAMA3 -> "<|start_header_id|>system<|end_header_id|>\n\n$systemContent<|eot_id|>"
+                else -> ""
             }
+            _uiState.update { state ->
+                state.copy(sessions = state.sessions.map { if (it.id == currentSessionId) it.copy(systemPrompt = formatted) else it })
+            }
+            formatted
         }
 
-        val promptBuilder = StringBuilder()
-        
-        // Handle GEMMA4 special thinking trigger in system prompt
-        if (config.enableThinking && template == ChatTemplate.GEMMA4) {
-            promptBuilder.append("<|turn>system\n<|think|>You are a helpful assistant with reasoning capabilities.<turn|>\n")
-        }
-
+        val promptBuilder = StringBuilder().append(systemPrompt)
         for (msg in history) {
             val roleTag = if (msg.role == Role.USER) template.userRole else template.assistantRole
             promptBuilder.append("${template.prefix}$roleTag${template.roleSuffix}${msg.content}${template.eot}")
         }
         promptBuilder.append("${template.prefix}${template.assistantRole}${template.roleSuffix}")
-        
-        // Pre-inject thinking tag if enabled to force the model to start reasoning
         if (config.enableThinking && template.thinkStartTag != null) {
-            if (_uiState.value.modelName?.contains("qwen", true) == true || 
-                _uiState.value.modelName?.contains("gemma-4", true) == true ||
-                _uiState.value.modelName?.contains("gemma4", true) == true) {
+            val modelName = _uiState.value.modelName ?: ""
+            if (modelName.contains("qwen", true) || modelName.contains("gemma-4", true) || modelName.contains("gemma4", true)) {
                 promptBuilder.append(template.thinkStartTag)
-                // Gemma 4 specific suffix for thought channel
-                if (template == ChatTemplate.GEMMA4) {
-                    promptBuilder.append("\n")
-                }
+                if (template == ChatTemplate.GEMMA4) promptBuilder.append("\n")
             }
         }
         
         val formattedPrompt = promptBuilder.toString()
         Log.d("LlmViewModel", "Sending prompt to JNI: $formattedPrompt")
 
-        var tokenCount = 0
-        var startTime = 0L
-
         viewModelScope.launch(Dispatchers.IO) {
             llmService?.llmManager?.generate(
-                formattedPrompt, 
-                template.stopStrings.toTypedArray(),
-                config.temperature,
-                config.topP,
-                config.topK,
-                config.presencePenalty,
+                formattedPrompt, template.stopStrings.toTypedArray(),
+                config.temperature, config.topP, config.topK, config.minP, config.presencePenalty, config.repetitionPenalty,
                 object : LlmCallback {
-                    override fun onToken(token: String) {
-                        if (startTime == 0L) startTime = System.currentTimeMillis()
-                        tokenCount++
-                        val elapsed = (System.currentTimeMillis() - startTime) / 1000f
-                        val tps = if (elapsed > 0) tokenCount / elapsed else 0f
+                    override fun onStatus(status: String) {
+                        _uiState.update { state ->
+                            val updatedPp = if (status.startsWith("Processing")) status.substringAfter("Processing... ").trim() else state.lastPpStatus
+                            val updatedTg = if (status.startsWith("Generating")) status.substringAfter("Generating... ").trim() else state.lastTgStatus
+                            state.copy(currentStatus = status, lastPpStatus = updatedPp, lastTgStatus = updatedTg)
+                        }
+                    }
 
+                    override fun onToken(token: String) {
                         _uiState.update { state ->
                             val updatedSessions = state.sessions.map { session ->
                                 if (session.id == currentSessionId) {
@@ -374,26 +368,31 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
                                     } else session
                                 } else session
                             }
-                            state.copy(sessions = updatedSessions, currentTps = tps, isGenerating = true)
+                            state.copy(sessions = updatedSessions, isGenerating = true)
                         }
                     }
 
                     override fun onComplete() {
+                        _uiState.update { state ->
+                            val summary = buildString {
+                                if (state.lastPpStatus != null) append("PP: ${state.lastPpStatus}")
+                                if (state.lastPpStatus != null && state.lastTgStatus != null) append(" | ")
+                                if (state.lastTgStatus != null) append("TG: ${state.lastTgStatus}")
+                            }
+                            state.copy(isGenerating = false, currentStatus = null, lastGenerationStatus = if (summary.isEmpty()) null else summary)
+                        }
                         val finalMsg = _uiState.value.sessions.find { it.id == currentSessionId }?.messages?.lastOrNull { it.id == assistantMsgId }
                         if (finalMsg != null) {
                             viewModelScope.launch {
                                 chatDao.insertMessage(MessageEntity(assistantMsgId, currentSessionId, Role.ASSISTANT.name, finalMsg.content))
-                                _uiState.update { it.copy(isGenerating = false, currentTps = null) }
                             }
-                        } else {
-                            _uiState.update { it.copy(isGenerating = false, currentTps = null) }
                         }
                     }
 
                     override fun onError(message: String) {
                         Log.e("LlmViewModel", "Generation error: $message")
                         val isStopped = message.contains("stopped", true)
-                        _uiState.update { state -> state.copy(isGenerating = false, error = if (isStopped) null else message, currentTps = null) }
+                        _uiState.update { it.copy(isGenerating = false, error = if (isStopped) null else message, currentStatus = null) }
                     }
                 }
             )
@@ -402,7 +401,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopGeneration() {
         llmService?.llmManager?.stop()
-        _uiState.update { it.copy(isGenerating = false, currentTps = null) }
+        _uiState.update { it.copy(isGenerating = false, currentStatus = null) }
     }
 
     override fun onCleared() {

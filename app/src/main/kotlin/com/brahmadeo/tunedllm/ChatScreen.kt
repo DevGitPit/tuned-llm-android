@@ -48,15 +48,23 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                 true
             } else {
                 val lastVisibleItem = visibleItemsInfo.lastOrNull()
-                lastVisibleItem?.index == layoutInfo.totalItemsCount - 1
+                val isLastItemVisible = lastVisibleItem?.let { it.index == layoutInfo.totalItemsCount - 1 } ?: false
+                if (!isLastItemVisible) return@derivedStateOf false
+                
+                // Also check if the bottom of the last item is actually visible
+                val lastItemBottom = (lastVisibleItem?.offset ?: 0) + (lastVisibleItem?.size ?: 0)
+                val viewportBottom = layoutInfo.viewportEndOffset
+                lastItemBottom <= viewportBottom + 100 // small buffer
             }
         }
     }
 
-    LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content) {
-        if (isAtBottom || state.isGenerating) {
+    LaunchedEffect(state.messages.lastOrNull()?.content) {
+        // Only auto-scroll if we are currently generating AND we were already at the bottom
+        if (state.isGenerating && isAtBottom) {
             if (state.messages.isNotEmpty()) {
-                listState.animateScrollToItem(state.messages.size - 1)
+                // Scroll to the last item with a large offset to ensure we hit the bottom of the bubble
+                listState.animateScrollToItem(state.messages.size - 1, 10000)
             }
         }
     }
@@ -247,11 +255,17 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                                 Text("Thinking Mode", style = MaterialTheme.typography.labelMedium)
                             }
                             
-                            if (state.isGenerating && state.currentTps != null) {
+                            if (state.isGenerating) {
                                 Text(
-                                    text = "${"%.1f".format(state.currentTps)} t/s",
+                                    text = state.currentStatus ?: "Processing...",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary
+                                )
+                            } else if (state.lastGenerationStatus != null) {
+                                Text(
+                                    text = state.lastGenerationStatus!!,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
                                 )
                             }
                         }
@@ -421,18 +435,28 @@ fun MarkdownContent(content: String, textColor: Color, viewModel: LlmViewModel) 
                                 .replace(template.thinkEndTag ?: "</think>", "")
                                 .trim()
                             
-                            if (cleanThink.isNotEmpty()) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(14.dp), tint = textColor.copy(alpha = 0.5f))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Reasoning", style = MaterialTheme.typography.labelSmall, color = textColor.copy(alpha = 0.5f))
-                                    }
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(14.dp), tint = textColor.copy(alpha = 0.5f))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Reasoning", style = MaterialTheme.typography.labelSmall, color = textColor.copy(alpha = 0.5f))
+                                }
+                                if (cleanThink.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = cleanThink,
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             color = textColor.copy(alpha = 0.7f),
+                                            fontStyle = FontStyle.Italic
+                                        )
+                                    )
+                                } else {
+                                    // Show a placeholder while thinking is starting
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Thinking...",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = textColor.copy(alpha = 0.3f),
                                             fontStyle = FontStyle.Italic
                                         )
                                     )
@@ -501,8 +525,17 @@ fun RenderStandardContent(content: String, textColor: Color, viewModel: LlmViewM
                 }
             }
         } else if (text.isNotBlank()) {
+            // Pre-process common LaTeX symbols that the markdown library doesn't support
+            val processedText = text
+                .replace("$\\rightarrow$", "→").replace("\\rightarrow", "→")
+                .replace("$\\leftarrow$", "←").replace("\\leftarrow", "←")
+                .replace("$\\Rightarrow$", "⇒").replace("\\Rightarrow", "⇒")
+                .replace("$\\Leftarrow$", "⇐").replace("\\Leftarrow", "⇐")
+                .replace("$\\leftrightarrow$", "↔").replace("\\leftrightarrow", "↔")
+                .replace("$\\dots$", "…").replace("\\dots", "…")
+
             MarkdownText(
-                markdown = text,
+                markdown = processedText,
                 style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
                 syntaxHighlightColor = if (isSystemInDarkTheme()) Color(0xFF2D2D2D) else Color(0xFFF5F5F5)
             )

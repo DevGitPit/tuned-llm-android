@@ -13,14 +13,17 @@ data class ChatMessage(
 data class ChatSession(
     val id: String,
     val title: String,
-    val messages: List<ChatMessage> = emptyList()
+    val messages: List<ChatMessage> = emptyList(),
+    val systemPrompt: String? = null
 )
 
 data class GenerationConfig(
     val temperature: Float = 0.7f,
     val topP: Float = 0.8f,
     val topK: Int = 20,
+    val minP: Float = 0.05f,
     val presencePenalty: Float = 1.5f,
+    val repetitionPenalty: Float = 1.1f,
     val enableThinking: Boolean = true,
     val mode: GenerationMode = GenerationMode.GENERAL
 )
@@ -100,6 +103,10 @@ data class ChatState(
     val currentSessionId: String? = null,
     val isGenerating: Boolean = false,
     val currentTps: Float? = null,
+    val currentStatus: String? = null,
+    val lastPpStatus: String? = null,
+    val lastTgStatus: String? = null,
+    val lastGenerationStatus: String? = null,
     val isModelLoaded: Boolean = false,
     val isAutoLoading: Boolean = false,
     val lastModelPath: String? = null,

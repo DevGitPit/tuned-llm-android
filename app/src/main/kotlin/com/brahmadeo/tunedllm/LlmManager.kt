@@ -12,6 +12,7 @@ import java.io.InputStream
 
 interface LlmCallback {
     fun onToken(token: String)
+    fun onStatus(status: String)
     fun onComplete()
     fun onError(message: String)
 }
@@ -32,7 +33,9 @@ class LlmManager(private val context: Context) {
         temperature: Float,
         topP: Float,
         topK: Int,
+        minP: Float,
         presencePenalty: Float,
+        repetitionPenalty: Float,
         callback: LlmCallback
     )
     external fun stop()
