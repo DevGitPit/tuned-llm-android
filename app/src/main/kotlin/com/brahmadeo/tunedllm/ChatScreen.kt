@@ -70,22 +70,40 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
     }
 
     if (showTemplateDialog) {
+        var nCtxValue by remember { mutableStateOf(state.config.nCtx.toFloat()) }
         AlertDialog(
             onDismissRequest = { showTemplateDialog = false },
-            title = { Text("Chat Template Info") },
+            title = { Text("Settings") },
             text = {
                 Column {
-                    Text("Current model: ${state.modelName ?: "Default"}")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("User Role: ${state.chatTemplate.userRole}")
-                    Text("Assistant Role: ${state.chatTemplate.assistantRole}")
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Stop Tokens: ${state.chatTemplate.stopStrings.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                    Text("Model: ${state.modelName ?: "Default"}")
+                    Text("Knowledge Cutoff: ${state.chatTemplate.knowledgeCutoff}", style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text("Context Limit: ${nCtxValue.toInt()} tokens", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = nCtxValue,
+                        onValueChange = { nCtxValue = it },
+                        valueRange = 2048f..32768f,
+                        steps = 15
+                    )
+                    Text("Higher values use more RAM but allow longer chats.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Roles: ${state.chatTemplate.userRole} / ${state.chatTemplate.assistantRole}", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
+                TextButton(onClick = { 
+                    viewModel.updateNCtx(nCtxValue.toInt())
+                    showTemplateDialog = false 
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
                 TextButton(onClick = { showTemplateDialog = false }) {
-                    Text("Close")
+                    Text("Cancel")
                 }
             }
         )
@@ -255,18 +273,33 @@ fun ChatScreen(viewModel: LlmViewModel, onModelPicker: () -> Unit) {
                                 Text("Thinking Mode", style = MaterialTheme.typography.labelMedium)
                             }
                             
-                            if (state.isGenerating) {
-                                Text(
-                                    text = state.currentStatus ?: "Processing...",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            } else if (state.lastGenerationStatus != null) {
-                                Text(
-                                    text = state.lastGenerationStatus!!,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (state.isGenerating || state.contextProgress > 0) {
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(18.dp)) {
+                                        CircularProgressIndicator(
+                                            progress = state.contextProgress,
+                                            modifier = Modifier.fillMaxSize(),
+                                            strokeWidth = 2.dp,
+                                            color = if (state.contextProgress > 0.9f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+
+                                if (state.isGenerating) {
+                                    Text(
+                                        text = state.currentStatus ?: "Processing...",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else if (state.lastGenerationStatus != null) {
+                                    Text(
+                                        text = state.lastGenerationStatus!!,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
                             }
                         }
 

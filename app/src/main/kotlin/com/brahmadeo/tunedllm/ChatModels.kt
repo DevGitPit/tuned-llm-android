@@ -25,7 +25,8 @@ data class GenerationConfig(
     val presencePenalty: Float = 1.5f,
     val repetitionPenalty: Float = 1.1f,
     val enableThinking: Boolean = true,
-    val mode: GenerationMode = GenerationMode.GENERAL
+    val mode: GenerationMode = GenerationMode.GENERAL,
+    val nCtx: Int = 8192
 )
 
 enum class GenerationMode {
@@ -41,7 +42,8 @@ data class ChatTemplate(
     val assistantRole: String,
     val thinkStartTag: String? = null,
     val thinkEndTag: String? = null,
-    val shouldPruneThinkingFromHistory: Boolean = false
+    val shouldPruneThinkingFromHistory: Boolean = false,
+    val knowledgeCutoff: String = "December 2024"
 ) {
     companion object {
         val GEMMA = ChatTemplate(
@@ -50,7 +52,8 @@ data class ChatTemplate(
             eot = "<end_of_turn>\n",
             stopStrings = listOf("<end_of_turn>", "<eos>", "</s>"),
             userRole = "user",
-            assistantRole = "model"
+            assistantRole = "model",
+            knowledgeCutoff = "January 2024"
         )
 
         val QWEN = ChatTemplate(
@@ -62,7 +65,8 @@ data class ChatTemplate(
             assistantRole = "assistant",
             thinkStartTag = "<think>",
             thinkEndTag = "</think>",
-            shouldPruneThinkingFromHistory = true
+            shouldPruneThinkingFromHistory = true,
+            knowledgeCutoff = "December 2024"
         )
 
         val GEMMA4 = ChatTemplate(
@@ -74,7 +78,8 @@ data class ChatTemplate(
             assistantRole = "model",
             thinkStartTag = "<|channel>thought",
             thinkEndTag = "<channel|>",
-            shouldPruneThinkingFromHistory = true
+            shouldPruneThinkingFromHistory = true,
+            knowledgeCutoff = "January 2025"
         )
 
         val LLAMA3 = ChatTemplate(
@@ -83,7 +88,8 @@ data class ChatTemplate(
             eot = "<|eot_id|>",
             stopStrings = listOf("<|eot_id|>", "<|end_of_text|>", "<|start_header_id|>"),
             userRole = "user",
-            assistantRole = "assistant"
+            assistantRole = "assistant",
+            knowledgeCutoff = "December 2023"
         )
 
         fun fromModelName(name: String?): ChatTemplate {
@@ -104,6 +110,7 @@ data class ChatState(
     val isGenerating: Boolean = false,
     val currentTps: Float? = null,
     val currentStatus: String? = null,
+    val contextProgress: Float = 0f,
     val lastPpStatus: String? = null,
     val lastTgStatus: String? = null,
     val lastGenerationStatus: String? = null,

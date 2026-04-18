@@ -152,7 +152,7 @@ static void inference_thread(jobject callback_global, std::string prompt_str, st
 
         n_past = prompt_tokens.size();
         smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(512, repetition_penalty, 0.0f, presence_penalty));
+        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(128, repetition_penalty, 0.0f, presence_penalty));
         llama_sampler_chain_add(smpl, llama_sampler_init_top_k(top_k));
         llama_sampler_chain_add(smpl, llama_sampler_init_top_p(top_p, 1));
         llama_sampler_chain_add(smpl, llama_sampler_init_min_p(min_p, 1));
