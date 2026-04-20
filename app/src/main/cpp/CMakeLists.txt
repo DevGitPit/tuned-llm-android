@@ -9,6 +9,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(LLAMA_DIR /data/data/com.termux/files/home/llama.cpp)
 set(OPENBLAS_LIB /data/data/com.termux/files/usr/lib/libopenblas.so)
+set(OPENBLAS_INCLUDE /data/data/com.termux/files/usr/include/openblas)
 
 # Include directories
 include_directories(
@@ -19,6 +20,9 @@ include_directories(
     ${LLAMA_DIR}/ggml/src
     ${LLAMA_DIR}/ggml/src/ggml-cpu
     ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/llamafile
+    ${LLAMA_DIR}/ggml/src/ggml-blas
+    ${OPENBLAS_INCLUDE}
 )
 
 # GGML core sources
@@ -38,25 +42,32 @@ set(GGML_SOURCES
     # CPU Backend
     ${LLAMA_DIR}/ggml/src/ggml-cpu/ggml-cpu.c
     ${LLAMA_DIR}/ggml/src/ggml-cpu/ggml-cpu.cpp
-    ${LLAMA_DIR}/ggml/src/ggml-cpu/binary-ops.cpp
-    ${LLAMA_DIR}/ggml/src/ggml-cpu/ops.cpp
-    ${LLAMA_DIR}/ggml/src/ggml-cpu/quants.c
     ${LLAMA_DIR}/ggml/src/ggml-cpu/repack.cpp
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/quants.c
     ${LLAMA_DIR}/ggml/src/ggml-cpu/traits.cpp
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/binary-ops.cpp
     ${LLAMA_DIR}/ggml/src/ggml-cpu/unary-ops.cpp
     ${LLAMA_DIR}/ggml/src/ggml-cpu/vec.cpp
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/ops.cpp
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/hbm.cpp
     
     # ARM specific backend
     ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp
     ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm/quants.c
     ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm/repack.cpp
+    
+    # Llamafile optimizations (sgemm)
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/llamafile/sgemm.cpp
+    
+    # BLAS backend
+    ${LLAMA_DIR}/ggml/src/ggml-blas/ggml-blas.cpp
 )
 
 # Llama sources from src/
-file(GLOB LLAMA_SOURCES "${LLAMA_DIR}/src/*.cpp")
+file(GLOB LLAMA_SOURCES CONFIGURE_DEPENDS "${LLAMA_DIR}/src/*.cpp")
 
 # Llama model implementations from src/models/
-file(GLOB MODEL_SOURCES "${LLAMA_DIR}/src/models/*.cpp")
+file(GLOB MODEL_SOURCES CONFIGURE_DEPENDS "${LLAMA_DIR}/src/models/*.cpp")
 
 add_library(llama_jni SHARED
     jni_bridge.cpp
@@ -78,12 +89,18 @@ target_link_libraries(llama_jni
 target_compile_options(llama_jni PRIVATE
     -O3
     -fopenmp
-    -DGGML_USE_OPENBLAS
     -DGGML_USE_CPU
+    -DGGML_USE_OPENBLAS
+    -DGGML_USE_BLAS
+    -DGGML_BLAS_USE_OPENBLAS
+    -DGGML_USE_OPENMP
+    -DGGML_USE_LLAMAFILE
     -DGGML_VERSION="0.9.11"
     -DGGML_COMMIT="69c28f154"
 )
 
 if (${ANDROID_ABI} STREQUAL "arm64-v8a")
-    target_compile_options(llama_jni PRIVATE -DGGML_CPU_ARM_ARCH=8)
+    # Enable dotprod and i8mm for better performance on modern ARM CPUs
+    target_compile_options(llama_jni PRIVATE -march=armv8.2-a+dotprod+i8mm)
+    target_compile_definitions(llama_jni PRIVATE GGML_USE_DOTPROD GGML_USE_MATMUL_INT8)
 endif()

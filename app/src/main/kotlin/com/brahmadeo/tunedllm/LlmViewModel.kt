@@ -102,6 +102,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createNewSession() {
+        stopGeneration()
         viewModelScope.launch {
             llmService?.llmManager?.clearContext()
             val newId = UUID.randomUUID().toString()
@@ -112,6 +113,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectSession(sessionId: String) {
         if (_uiState.value.currentSessionId == sessionId) return
+        stopGeneration()
         viewModelScope.launch {
             llmService?.llmManager?.clearContext()
             _uiState.update { it.copy(currentSessionId = sessionId, lastPpStatus = null, lastTgStatus = null, lastGenerationStatus = null, contextProgress = 0f) }
@@ -142,6 +144,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
         val path = _uiState.value.lastModelPath
         val name = _uiState.value.modelName
         if (path != null && name != null && _uiState.value.isModelLoaded) {
+            stopGeneration()
             loadModelFromPath(path, name)
         }
     }
@@ -171,6 +174,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSelectedModel(uri: Uri) {
+        stopGeneration()
         viewModelScope.launch {
             _uiState.update { it.copy(isCopying = true, copyProgress = 0f, error = null) }
             val manager = llmService?.llmManager
@@ -225,6 +229,7 @@ class LlmViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshRamInfo(context: Context) { _ramInfo.value = getDeviceRamInfo(context) }
 
     fun onFileSelected(uri: Uri, context: Context) {
+        stopGeneration()
         selectedUri = uri
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
